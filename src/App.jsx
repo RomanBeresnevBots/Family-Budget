@@ -3,6 +3,7 @@ import { getAuthRedirectUrl, isSupabaseConfigured, requireSupabase } from "./lib
 
 const navigationItems = [
   "Бюджет",
+  "Cashflow",
   "Аналитика",
   "Памятные даты",
   "Настройка",
@@ -14,6 +15,7 @@ const supportedScreenNames = new Set([
   "regular",
   "months",
   "periodMonth",
+  "cashflow",
   "settings",
   "categories",
 ]);
@@ -441,10 +443,62 @@ const STORAGE_KEY = "family-budget-prototype-members-v2";
 const CATEGORY_STORAGE_KEY = "family-budget-prototype-categories-v2";
 const CATEGORY_ICON_COLOR_MIGRATION_KEY = "family-budget-prototype-category-icon-colors-v2";
 const REGULAR_EXPENSES_STORAGE_KEY = "family-budget-prototype-regular-expenses-v2";
+const CASHFLOW_STORAGE_KEY = "family-budget-prototype-cashflow-v1";
 const STORAGE_RESET_KEY = "family-budget-prototype-storage-reset-v1";
 const TRACKED_YEARS_STORAGE_KEY = "family-budget-prototype-tracked-years-v1";
 const EXPANDED_YEARS_STORAGE_KEY = "family-budget-prototype-expanded-years-v1";
 const DEFAULT_HOUSEHOLD_NAME = "Family Budget";
+const DEFAULT_CASHFLOW_CURRENCY = "CZK";
+const cashflowCurrencyOptions = ["CZK", "EUR", "USD", "RUB"];
+const cashflowAccountTypeOptions = [
+  { value: "bank", label: "Банк" },
+  { value: "cash", label: "Наличные" },
+  { value: "broker", label: "Брокер" },
+  { value: "other", label: "Другое" },
+];
+const cashflowAssetTypeOptions = [
+  { value: "cash", label: "Наличные" },
+  { value: "bank_account", label: "Банковский счёт" },
+  { value: "stocks", label: "Акции" },
+  { value: "bonds", label: "Облигации" },
+  { value: "crypto", label: "Крипто" },
+  { value: "metals", label: "Металлы" },
+  { value: "other", label: "Другое" },
+];
+const cashflowIncomeOwnerOptions = [
+  { value: "roma", label: "Рома" },
+  { value: "sasha", label: "Саша" },
+  { value: "shared", label: "Общее" },
+];
+const cashflowIncomeTypeOptions = [
+  { value: "salary", label: "Зарплата" },
+  { value: "bonus", label: "Бонус" },
+  { value: "refund", label: "Возврат" },
+  { value: "gift", label: "Подарок" },
+  { value: "other", label: "Другое" },
+];
+const cashflowIncomeStatusOptions = [
+  { value: "expected", label: "Ожидается" },
+  { value: "received", label: "Получено" },
+];
+const cashflowTargetModeOptions = [
+  { value: "manual", label: "Вручную" },
+  { value: "auto_average_mandatory_budget", label: "Авто от среднего бюджета" },
+];
+const cashflowFundTypeMeta = {
+  budget_reserve: { label: "Бюджетная кубышка", icon: "🪙" },
+  emergency_reserve: { label: "Сейф безопасности", icon: "🛟" },
+  investments: { label: "Инвестиции", icon: "📈" },
+  savings_goal: { label: "Накопления", icon: "🎯" },
+  free_balance: { label: "Свободный остаток", icon: "💵" },
+};
+const cashflowSystemFundTypes = [
+  "budget_reserve",
+  "emergency_reserve",
+  "investments",
+  "savings_goal",
+  "free_balance",
+];
 
 let prototypeStoragePrepared = false;
 
@@ -788,6 +842,230 @@ function getInitialExpandedYears(trackedYears) {
       fallbackYears.map((year, index) => [year, index === 0]),
     );
   }
+}
+
+function shiftMonthContext(context, monthOffset) {
+  const monthIndex = context.monthIndex + monthOffset;
+  const yearOffset = Math.floor(monthIndex / 12);
+  const normalizedMonthIndex = ((monthIndex % 12) + 12) % 12;
+
+  return {
+    monthIndex: normalizedMonthIndex,
+    monthName: fullMonthNames[normalizedMonthIndex],
+    monthShort: monthOptions[normalizedMonthIndex],
+    year: context.year + yearOffset,
+  };
+}
+
+function getTodaySqlDate() {
+  const now = new Date();
+  return buildSqlDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+}
+
+function getCashflowSystemFundLabel(fundType) {
+  return cashflowFundTypeMeta[fundType]?.label ?? fundType;
+}
+
+function getCashflowFundIcon(fundType) {
+  return cashflowFundTypeMeta[fundType]?.icon ?? "💼";
+}
+
+function getCashflowOwnerLabel(owner) {
+  return cashflowIncomeOwnerOptions.find((option) => option.value === owner)?.label ?? owner;
+}
+
+function getCashflowIncomeTypeLabel(type) {
+  return cashflowIncomeTypeOptions.find((option) => option.value === type)?.label ?? type;
+}
+
+function createDefaultCashflowFunds(baseCurrency = DEFAULT_CASHFLOW_CURRENCY) {
+  return cashflowSystemFundTypes.map((fundType) => ({
+    id: `system-${fundType}`,
+    name: getCashflowSystemFundLabel(fundType),
+    fundType,
+    targetMode:
+      fundType === "budget_reserve" || fundType === "emergency_reserve"
+        ? "auto_average_mandatory_budget"
+        : "manual",
+    targetMultiplier: fundType === "budget_reserve" ? 2 : fundType === "emergency_reserve" ? 3 : 0,
+    manualTargetAmount: null,
+    currency: baseCurrency,
+    isSystem: true,
+    isActive: true,
+  }));
+}
+
+function createDefaultCashflowSettings(baseCurrency = DEFAULT_CASHFLOW_CURRENCY) {
+  return {
+    id: "cashflow-settings-default",
+    budgetReserveMonthsMultiplier: 2,
+    emergencyReserveMonthsMultiplier: 3,
+    mandatoryBudgetAverageMonths: 6,
+    budgetReserveManualTarget: null,
+    emergencyReserveManualTarget: null,
+    baseCurrency,
+  };
+}
+
+function normalizeCashflowAccount(account, index = 0) {
+  if (!account) {
+    return null;
+  }
+
+  return {
+    id: account.id ?? `cashflow-account-${index}`,
+    name: String(account.name ?? "").trim(),
+    owner: account.owner ?? "shared",
+    accountType: account.accountType ?? account.account_type ?? "bank",
+    defaultCurrency: account.defaultCurrency ?? account.default_currency ?? DEFAULT_CASHFLOW_CURRENCY,
+    isActive: account.isActive ?? account.is_active ?? true,
+    createdAt: account.createdAt ?? account.created_at ?? null,
+  };
+}
+
+function normalizeCashflowFund(fund, index = 0) {
+  if (!fund) {
+    return null;
+  }
+
+  return {
+    id: fund.id ?? `cashflow-fund-${index}`,
+    name: String(fund.name ?? "").trim(),
+    fundType: fund.fundType ?? fund.fund_type ?? "free_balance",
+    targetMode: fund.targetMode ?? fund.target_mode ?? "manual",
+    targetMultiplier: Number(fund.targetMultiplier ?? fund.target_multiplier ?? 0),
+    manualTargetAmount:
+      fund.manualTargetAmount === null || fund.manualTargetAmount === undefined
+        ? null
+        : Number(fund.manualTargetAmount ?? fund.manual_target_amount),
+    currency: fund.currency ?? DEFAULT_CASHFLOW_CURRENCY,
+    isSystem: fund.isSystem ?? fund.is_system ?? false,
+    isActive: fund.isActive ?? fund.is_active ?? true,
+    createdAt: fund.createdAt ?? fund.created_at ?? null,
+  };
+}
+
+function normalizeCashflowSnapshot(snapshot, index = 0) {
+  if (!snapshot) {
+    return null;
+  }
+
+  return {
+    id: snapshot.id ?? `cashflow-snapshot-${index}`,
+    accountId: snapshot.accountId ?? snapshot.account_id ?? "",
+    fundId: snapshot.fundId ?? snapshot.fund_id ?? "",
+    snapshotDate: snapshot.snapshotDate ?? snapshot.snapshot_date ?? getTodaySqlDate(),
+    amount: Number(snapshot.amount ?? 0),
+    currency: snapshot.currency ?? DEFAULT_CASHFLOW_CURRENCY,
+    amountCzk: Number(snapshot.amountCzk ?? snapshot.amount_czk ?? 0),
+    exchangeRateToCzk: Number(snapshot.exchangeRateToCzk ?? snapshot.exchange_rate_to_czk ?? 1),
+    assetType: snapshot.assetType ?? snapshot.asset_type ?? "bank_account",
+    owner: snapshot.owner ?? "shared",
+    createdAt: snapshot.createdAt ?? snapshot.created_at ?? null,
+  };
+}
+
+function normalizeCashflowIncomeEvent(event, index = 0) {
+  if (!event) {
+    return null;
+  }
+
+  return {
+    id: event.id ?? `cashflow-income-${index}`,
+    incomeDate: event.incomeDate ?? event.income_date ?? getTodaySqlDate(),
+    owner: event.owner ?? "shared",
+    incomeType: event.incomeType ?? event.income_type ?? "salary",
+    status: event.status ?? "expected",
+    expectedAmount: Number(event.expectedAmount ?? event.expected_amount ?? 0),
+    actualAmount: Number(event.actualAmount ?? event.actual_amount ?? 0),
+    currency: event.currency ?? DEFAULT_CASHFLOW_CURRENCY,
+    amountCzk: Number(event.amountCzk ?? event.amount_czk ?? 0),
+    exchangeRateToCzk: Number(event.exchangeRateToCzk ?? event.exchange_rate_to_czk ?? 1),
+    note: event.note ?? "",
+    createdAt: event.createdAt ?? event.created_at ?? null,
+  };
+}
+
+function normalizeCashflowSettings(settings) {
+  if (!settings) {
+    return createDefaultCashflowSettings();
+  }
+
+  return {
+    id: settings.id ?? "cashflow-settings-default",
+    budgetReserveMonthsMultiplier: Number(
+      settings.budgetReserveMonthsMultiplier ?? settings.budget_reserve_months_multiplier ?? 2,
+    ),
+    emergencyReserveMonthsMultiplier: Number(
+      settings.emergencyReserveMonthsMultiplier ?? settings.emergency_reserve_months_multiplier ?? 3,
+    ),
+    mandatoryBudgetAverageMonths: Number(
+      settings.mandatoryBudgetAverageMonths ?? settings.mandatory_budget_average_months ?? 6,
+    ),
+    budgetReserveManualTarget:
+      settings.budgetReserveManualTarget === null || settings.budgetReserveManualTarget === undefined
+        ? null
+        : Number(settings.budgetReserveManualTarget ?? settings.budget_reserve_manual_target),
+    emergencyReserveManualTarget:
+      settings.emergencyReserveManualTarget === null || settings.emergencyReserveManualTarget === undefined
+        ? null
+        : Number(settings.emergencyReserveManualTarget ?? settings.emergency_reserve_manual_target),
+    baseCurrency: settings.baseCurrency ?? settings.base_currency ?? DEFAULT_CASHFLOW_CURRENCY,
+  };
+}
+
+function normalizeCashflowState(state) {
+  const settings = normalizeCashflowSettings(state?.settings);
+  const funds = (state?.funds ?? createDefaultCashflowFunds(settings.baseCurrency))
+    .map(normalizeCashflowFund)
+    .filter(Boolean);
+
+  cashflowSystemFundTypes.forEach((fundType) => {
+    if (!funds.some((fund) => fund.fundType === fundType)) {
+      funds.push(
+        normalizeCashflowFund(
+          createDefaultCashflowFunds(settings.baseCurrency).find((fund) => fund.fundType === fundType),
+        ),
+      );
+    }
+  });
+
+  return {
+    accounts: (state?.accounts ?? []).map(normalizeCashflowAccount).filter(Boolean),
+    funds,
+    snapshots: (state?.snapshots ?? []).map(normalizeCashflowSnapshot).filter(Boolean),
+    incomeEvents: (state?.incomeEvents ?? []).map(normalizeCashflowIncomeEvent).filter(Boolean),
+    settings,
+  };
+}
+
+function getInitialCashflowState() {
+  if (typeof window === "undefined" || isSupabaseConfigured) {
+    return normalizeCashflowState({
+      accounts: [],
+      funds: createDefaultCashflowFunds(),
+      snapshots: [],
+      incomeEvents: [],
+      settings: createDefaultCashflowSettings(),
+    });
+  }
+
+  try {
+    const saved = window.localStorage.getItem(CASHFLOW_STORAGE_KEY);
+    if (saved) {
+      return normalizeCashflowState(JSON.parse(saved));
+    }
+  } catch {
+    // ignore
+  }
+
+  return normalizeCashflowState({
+    accounts: [],
+    funds: createDefaultCashflowFunds(),
+    snapshots: [],
+    incomeEvents: [],
+    settings: createDefaultCashflowSettings(),
+  });
 }
 
 function getAuthUserDisplayName(user) {
@@ -1252,6 +1530,254 @@ async function loadBudgetSnapshotFromSupabase(householdId) {
   };
 }
 
+async function ensureCashflowDefaultsInSupabase(householdId) {
+  const supabase = requireSupabase();
+  const { data: existingFunds, error: existingFundsError } = await supabase
+    .from("cashflow_funds")
+    .select("id, fund_type")
+    .eq("household_id", householdId);
+
+  if (existingFundsError) {
+    throw existingFundsError;
+  }
+
+  const existingFundTypes = new Set((existingFunds ?? []).map((fund) => fund.fund_type));
+  const defaultFunds = createDefaultCashflowFunds()
+    .filter((fund) => !existingFundTypes.has(fund.fundType))
+    .map((fund) => ({
+      household_id: householdId,
+      name: fund.name,
+      fund_type: fund.fundType,
+      target_mode: fund.targetMode,
+      target_multiplier: fund.targetMultiplier,
+      manual_target_amount: fund.manualTargetAmount,
+      currency: fund.currency,
+      is_system: fund.isSystem,
+      is_active: fund.isActive,
+    }));
+
+  if (defaultFunds.length) {
+    const { error: insertFundsError } = await supabase.from("cashflow_funds").insert(defaultFunds);
+    if (insertFundsError) {
+      throw insertFundsError;
+    }
+  }
+
+  const { data: existingSettings, error: settingsError } = await supabase
+    .from("cashflow_settings")
+    .select("id")
+    .eq("household_id", householdId)
+    .maybeSingle();
+
+  if (settingsError) {
+    throw settingsError;
+  }
+
+  if (!existingSettings) {
+    const settings = createDefaultCashflowSettings();
+    const { error: insertSettingsError } = await supabase.from("cashflow_settings").insert({
+      household_id: householdId,
+      budget_reserve_months_multiplier: settings.budgetReserveMonthsMultiplier,
+      emergency_reserve_months_multiplier: settings.emergencyReserveMonthsMultiplier,
+      mandatory_budget_average_months: settings.mandatoryBudgetAverageMonths,
+      budget_reserve_manual_target: settings.budgetReserveManualTarget,
+      emergency_reserve_manual_target: settings.emergencyReserveManualTarget,
+      base_currency: settings.baseCurrency,
+    });
+
+    if (insertSettingsError) {
+      throw insertSettingsError;
+    }
+  }
+}
+
+async function loadCashflowStateFromSupabase(householdId) {
+  const supabase = requireSupabase();
+  await ensureCashflowDefaultsInSupabase(householdId);
+
+  const [
+    { data: accounts, error: accountsError },
+    { data: funds, error: fundsError },
+    { data: snapshots, error: snapshotsError },
+    { data: incomeEvents, error: incomeEventsError },
+    { data: settings, error: settingsError },
+  ] = await Promise.all([
+    supabase.from("cashflow_accounts").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
+    supabase.from("cashflow_funds").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
+    supabase
+      .from("cashflow_balance_snapshots")
+      .select("*")
+      .eq("household_id", householdId)
+      .order("snapshot_date", { ascending: false })
+      .order("created_at", { ascending: false }),
+    supabase
+      .from("cashflow_income_events")
+      .select("*")
+      .eq("household_id", householdId)
+      .order("income_date", { ascending: false })
+      .order("created_at", { ascending: false }),
+    supabase.from("cashflow_settings").select("*").eq("household_id", householdId).maybeSingle(),
+  ]);
+
+  if (accountsError) throw accountsError;
+  if (fundsError) throw fundsError;
+  if (snapshotsError) throw snapshotsError;
+  if (incomeEventsError) throw incomeEventsError;
+  if (settingsError) throw settingsError;
+
+  return normalizeCashflowState({
+    accounts,
+    funds,
+    snapshots,
+    incomeEvents,
+    settings,
+  });
+}
+
+async function saveCashflowSettingsToSupabase({ householdId, settings, funds }) {
+  const supabase = requireSupabase();
+  const normalizedSettings = normalizeCashflowSettings(settings);
+
+  const { error: settingsError } = await supabase.from("cashflow_settings").upsert(
+    {
+      household_id: householdId,
+      budget_reserve_months_multiplier: normalizedSettings.budgetReserveMonthsMultiplier,
+      emergency_reserve_months_multiplier: normalizedSettings.emergencyReserveMonthsMultiplier,
+      mandatory_budget_average_months: normalizedSettings.mandatoryBudgetAverageMonths,
+      budget_reserve_manual_target: normalizedSettings.budgetReserveManualTarget,
+      emergency_reserve_manual_target: normalizedSettings.emergencyReserveManualTarget,
+      base_currency: normalizedSettings.baseCurrency,
+    },
+    { onConflict: "household_id" },
+  );
+
+  if (settingsError) {
+    throw settingsError;
+  }
+
+  for (const fund of funds) {
+    const { error: fundError } = await supabase.from("cashflow_funds").update({
+      target_mode: fund.targetMode,
+      target_multiplier: fund.targetMultiplier,
+      manual_target_amount: fund.manualTargetAmount,
+      currency: fund.currency,
+      is_active: fund.isActive,
+      name: fund.name,
+    }).eq("id", fund.id);
+
+    if (fundError) {
+      throw fundError;
+    }
+  }
+}
+
+async function saveCashflowIncomeEventToSupabase({ householdId, event }) {
+  const supabase = requireSupabase();
+  const normalizedEvent = normalizeCashflowIncomeEvent(event);
+
+  const payload = {
+    household_id: householdId,
+    income_date: normalizedEvent.incomeDate,
+    owner: normalizedEvent.owner,
+    income_type: normalizedEvent.incomeType,
+    status: normalizedEvent.status,
+    expected_amount: normalizedEvent.expectedAmount,
+    actual_amount: normalizedEvent.actualAmount,
+    currency: normalizedEvent.currency,
+    amount_czk: normalizedEvent.amountCzk,
+    exchange_rate_to_czk: normalizedEvent.exchangeRateToCzk,
+    note: normalizedEvent.note,
+  };
+
+  if (normalizedEvent.id && !String(normalizedEvent.id).startsWith("cashflow-income-")) {
+    const { error } = await supabase.from("cashflow_income_events").update(payload).eq("id", normalizedEvent.id);
+    if (error) {
+      throw error;
+    }
+
+    return normalizedEvent.id;
+  }
+
+  const { data, error } = await supabase
+    .from("cashflow_income_events")
+    .insert(payload)
+    .select("id")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return data.id;
+}
+
+async function saveCashflowSnapshotToSupabase({ householdId, snapshot, accountDraft, existingAccounts }) {
+  const supabase = requireSupabase();
+  let accountId = snapshot.accountId;
+
+  if (!accountId && accountDraft?.name?.trim()) {
+    const payload = {
+      household_id: householdId,
+      name: accountDraft.name.trim(),
+      owner: accountDraft.owner,
+      account_type: accountDraft.accountType,
+      default_currency: accountDraft.defaultCurrency,
+      is_active: true,
+    };
+
+    const { data, error } = await supabase
+      .from("cashflow_accounts")
+      .insert(payload)
+      .select("id")
+      .single();
+
+    if (error) {
+      throw error;
+    }
+
+    accountId = data.id;
+  }
+
+  const normalizedSnapshot = normalizeCashflowSnapshot({ ...snapshot, accountId });
+  const payload = {
+    household_id: householdId,
+    account_id: normalizedSnapshot.accountId,
+    fund_id: normalizedSnapshot.fundId,
+    snapshot_date: normalizedSnapshot.snapshotDate,
+    amount: normalizedSnapshot.amount,
+    currency: normalizedSnapshot.currency,
+    amount_czk: normalizedSnapshot.amountCzk,
+    exchange_rate_to_czk: normalizedSnapshot.exchangeRateToCzk,
+    asset_type: normalizedSnapshot.assetType,
+    owner: normalizedSnapshot.owner,
+  };
+
+  if (normalizedSnapshot.id && !String(normalizedSnapshot.id).startsWith("cashflow-snapshot-")) {
+    const { error } = await supabase
+      .from("cashflow_balance_snapshots")
+      .update(payload)
+      .eq("id", normalizedSnapshot.id);
+
+    if (error) {
+      throw error;
+    }
+
+    return { snapshotId: normalizedSnapshot.id, accountId };
+  }
+
+  const { data, error } = await supabase
+    .from("cashflow_balance_snapshots")
+    .insert(payload)
+    .select("id")
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return { snapshotId: data.id, accountId };
+}
+
 function getRegularAmountForPeriod(template, year, monthValue) {
   const targetOrder = getPeriodOrderKey(year, monthValue);
   const sortedHistory = [...(template.history ?? [])].sort(
@@ -1404,6 +1930,205 @@ function buildCombinedMonthExpenses({ members, regularExpenses, monthContext }) 
 
     return left.title.localeCompare(right.title, "ru");
   });
+}
+
+function calculateAverageMandatoryBudget({ members, regularExpenses, currentContext, months = 6 }) {
+  const totals = Array.from({ length: months }, (_, index) => {
+    const monthContext = shiftMonthContext(currentContext, -index);
+    const expenses = buildCombinedMonthExpenses({
+      members,
+      regularExpenses,
+      monthContext,
+    });
+
+    return expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
+  }).filter((value) => Number.isFinite(value));
+
+  if (!totals.length) {
+    return 0;
+  }
+
+  return Math.round(totals.reduce((sum, value) => sum + value, 0) / totals.length);
+}
+
+function calculateBudgetReserveTarget({ settings, funds, averageMandatoryBudget }) {
+  const reserveFund = funds.find((fund) => fund.fundType === "budget_reserve");
+  if (!reserveFund) {
+    return 0;
+  }
+
+  const manualTarget = reserveFund.manualTargetAmount ?? settings.budgetReserveManualTarget;
+  if (reserveFund.targetMode === "manual" && manualTarget) {
+    return Number(manualTarget);
+  }
+
+  const multiplier = reserveFund.targetMultiplier || settings.budgetReserveMonthsMultiplier || 2;
+  return Math.round(averageMandatoryBudget * multiplier);
+}
+
+function calculateEmergencyReserveTarget({ settings, funds, averageMandatoryBudget }) {
+  const reserveFund = funds.find((fund) => fund.fundType === "emergency_reserve");
+  if (!reserveFund) {
+    return 0;
+  }
+
+  const manualTarget = reserveFund.manualTargetAmount ?? settings.emergencyReserveManualTarget;
+  if (reserveFund.targetMode === "manual" && manualTarget) {
+    return Number(manualTarget);
+  }
+
+  const multiplier = reserveFund.targetMultiplier || settings.emergencyReserveMonthsMultiplier || 3;
+  return Math.round(averageMandatoryBudget * multiplier);
+}
+
+function calculateFundCurrentBalance({ fundId, snapshots }) {
+  const latestByAccount = new Map();
+
+  snapshots
+    .filter((snapshot) => snapshot.fundId === fundId)
+    .forEach((snapshot) => {
+      const key = `${snapshot.accountId}|${snapshot.assetType}`;
+      const existing = latestByAccount.get(key);
+
+      if (!existing || new Date(snapshot.snapshotDate).getTime() >= new Date(existing.snapshotDate).getTime()) {
+        latestByAccount.set(key, snapshot);
+      }
+    });
+
+  return [...latestByAccount.values()].reduce((sum, snapshot) => sum + Number(snapshot.amountCzk ?? 0), 0);
+}
+
+function calculateTotalCapitalCzk({ snapshots }) {
+  const latestByAccountFund = new Map();
+
+  snapshots.forEach((snapshot) => {
+    const key = `${snapshot.accountId}|${snapshot.fundId}|${snapshot.assetType}`;
+    const existing = latestByAccountFund.get(key);
+    if (!existing || new Date(snapshot.snapshotDate).getTime() >= new Date(existing.snapshotDate).getTime()) {
+      latestByAccountFund.set(key, snapshot);
+    }
+  });
+
+  return [...latestByAccountFund.values()].reduce((sum, snapshot) => sum + Number(snapshot.amountCzk ?? 0), 0);
+}
+
+function calculateNextMonthBudgetTotal(expenses) {
+  return expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
+}
+
+function calculatePayerAllocationFromBudgetItems(expenses) {
+  return expenses.reduce(
+    (result, expense) => {
+      const amount = Number(expense.amount ?? 0);
+      if (expense.payer === "Рома") {
+        result.roma += amount;
+      } else if (expense.payer === "Саша") {
+        result.sasha += amount;
+      } else {
+        result.unassigned += amount;
+      }
+
+      return result;
+    },
+    { roma: 0, sasha: 0, unassigned: 0 },
+  );
+}
+
+function calculateBudgetReserveReplenishment({ nextMonthBudgetTotal, budgetReserveCurrent }) {
+  const fundingAmount = Math.min(budgetReserveCurrent, nextMonthBudgetTotal);
+  const deficit = Math.max(nextMonthBudgetTotal - budgetReserveCurrent, 0);
+
+  return {
+    fundingAmount,
+    replenishmentRequired: fundingAmount,
+    deficit,
+  };
+}
+
+function calculateIncomeWaterfall({
+  incomeEvents,
+  currentContext,
+  budgetReserveReplenishmentRequired,
+  budgetReserveCurrent,
+  budgetReserveTarget,
+  emergencyReserveCurrent,
+  emergencyReserveTarget,
+}) {
+  const currentMonthOrder = getPeriodOrderKey(currentContext.year, currentContext.monthName);
+  const receivedIncome = incomeEvents
+    .filter((event) => {
+      if (event.status !== "received") {
+        return false;
+      }
+
+      const eventDate = new Date(event.incomeDate);
+      return getPeriodOrderKey(eventDate.getFullYear(), fullMonthNames[eventDate.getMonth()]) === currentMonthOrder;
+    })
+    .reduce((sum, event) => sum + Number(event.amountCzk ?? 0), 0);
+
+  const budgetReserveShortfallToTarget = Math.max(budgetReserveTarget - budgetReserveCurrent, 0);
+  const budgetReserveNeed = Math.max(budgetReserveReplenishmentRequired, budgetReserveShortfallToTarget);
+  const budgetReserveCovered = Math.min(receivedIncome, budgetReserveNeed);
+  const remainingAfterBudgetReserve = Math.max(receivedIncome - budgetReserveCovered, 0);
+  const emergencyReserveNeed = Math.max(emergencyReserveTarget - emergencyReserveCurrent, 0);
+  const emergencyReserveCovered = Math.min(remainingAfterBudgetReserve, emergencyReserveNeed);
+  const availableForInvestments = Math.max(remainingAfterBudgetReserve - emergencyReserveCovered, 0);
+
+  return {
+    receivedIncome,
+    budgetReserveCovered,
+    budgetReserveNeed,
+    emergencyReserveCovered,
+    emergencyReserveNeed,
+    availableForInvestments,
+  };
+}
+
+function calculateCashflowWarnings({
+  nextMonthBudgetTotal,
+  budgetReserveCurrent,
+  budgetReserveTarget,
+  emergencyReserveCurrent,
+  emergencyReserveTarget,
+  payerAllocation,
+  snapshots,
+}) {
+  const warnings = [];
+
+  if (!nextMonthBudgetTotal) {
+    warnings.push("Нет бюджета следующего месяца.");
+  }
+
+  if (budgetReserveCurrent < budgetReserveTarget) {
+    warnings.push("Бюджетная кубышка ниже целевого уровня.");
+  }
+
+  if (budgetReserveCurrent < nextMonthBudgetTotal) {
+    warnings.push(
+      `Бюджетной кубышки не хватает на следующий месяц. Дефицит: ${formatCurrency(
+        nextMonthBudgetTotal - budgetReserveCurrent,
+      )} Kč.`,
+    );
+  }
+
+  if (emergencyReserveCurrent < emergencyReserveTarget) {
+    warnings.push("Сейф безопасности ниже целевого уровня.");
+  }
+
+  if (payerAllocation.unassigned > 0) {
+    warnings.push("Есть строки бюджета без плательщика.");
+  }
+
+  const latestSnapshotTimestamp = snapshots.length
+    ? Math.max(...snapshots.map((snapshot) => new Date(snapshot.snapshotDate).getTime()))
+    : 0;
+  const freshnessLimit = 1000 * 60 * 60 * 24 * 30;
+
+  if (!latestSnapshotTimestamp || Date.now() - latestSnapshotTimestamp > freshnessLimit) {
+    warnings.push("Нет свежих снимков баланса.");
+  }
+
+  return warnings;
 }
 
 function getCategoryOption(category, categories) {
@@ -2725,6 +3450,10 @@ function getScreenNavigationLabel(screen, selectedPeriodContext) {
     return "Бюджет";
   }
 
+  if (screen === "cashflow") {
+    return "Cashflow";
+  }
+
   if (screen === "nextMonth") {
     return "Бюджет грядущего месяца";
   }
@@ -2756,6 +3485,7 @@ function NavigationMenu({ currentScreen, onNavigate, selectedPeriodContext }) {
           key={item}
           className={
             ((currentScreen === "months" || currentScreen === "periodMonth" || currentScreen === "month" || currentScreen === "nextMonth" || currentScreen === "regular") && index === 0) ||
+            (currentScreen === "cashflow" && item === "Cashflow") ||
             ((currentScreen === "settings" || currentScreen === "categories") && item === "Настройка")
               ? "nav-item active"
               : "nav-item"
@@ -3406,6 +4136,643 @@ function NextMonthBudgetScreen({
   );
 }
 
+function CashflowMetricCard({ label, value, accent = false, note = "" }) {
+  return (
+    <section className={accent ? "card cashflow-metric-card accent" : "card cashflow-metric-card"}>
+      <span className="cashflow-metric-label">{label}</span>
+      <strong className="cashflow-metric-value">{value}</strong>
+      {note ? <span className="cashflow-metric-note">{note}</span> : null}
+    </section>
+  );
+}
+
+function CashflowDetailRow({ label, value, hint = "", danger = false }) {
+  return (
+    <div className={danger ? "cashflow-detail-row danger" : "cashflow-detail-row"}>
+      <div className="cashflow-detail-copy">
+        <strong>{label}</strong>
+        {hint ? <span>{hint}</span> : null}
+      </div>
+      <div className="cashflow-detail-value">{value}</div>
+    </div>
+  );
+}
+
+function CashflowIncomeEditorModal({ incomeEvent, onClose, onSave }) {
+  const isCreateMode = !incomeEvent;
+  const [form, setForm] = useState(() => ({
+    incomeDate: incomeEvent?.incomeDate ?? getTodaySqlDate(),
+    owner: incomeEvent?.owner ?? "shared",
+    incomeType: incomeEvent?.incomeType ?? "salary",
+    status: incomeEvent?.status ?? "received",
+    expectedAmount: incomeEvent ? String(incomeEvent.expectedAmount || "") : "",
+    actualAmount: incomeEvent ? String(incomeEvent.actualAmount || "") : "",
+    currency: incomeEvent?.currency ?? DEFAULT_CASHFLOW_CURRENCY,
+    exchangeRateToCzk:
+      incomeEvent?.exchangeRateToCzk && incomeEvent.exchangeRateToCzk !== 1
+        ? String(incomeEvent.exchangeRateToCzk)
+        : "",
+    note: incomeEvent?.note ?? "",
+  }));
+
+  const isReceived = form.status === "received";
+  const rawAmount = Number(isReceived ? form.actualAmount || 0 : form.expectedAmount || 0);
+  const rate = form.currency === "CZK" ? 1 : Number(form.exchangeRateToCzk || 0);
+  const isValid = form.incomeDate && rawAmount > 0 && (form.currency === "CZK" || rate > 0);
+
+  const handleSave = () => {
+    if (!isValid) {
+      return;
+    }
+
+    onSave({
+      ...(incomeEvent ?? {}),
+      incomeDate: form.incomeDate,
+      owner: form.owner,
+      incomeType: form.incomeType,
+      status: form.status,
+      expectedAmount: Number(form.expectedAmount || 0),
+      actualAmount: Number(form.actualAmount || 0),
+      currency: form.currency,
+      exchangeRateToCzk: form.currency === "CZK" ? 1 : rate,
+      amountCzk: Math.round(rawAmount * (form.currency === "CZK" ? 1 : rate)),
+      note: form.note.trim(),
+    });
+  };
+
+  return (
+    <ModalShell title={isCreateMode ? "Добавить доход" : "Изменить доход"} onClose={onClose} compact>
+      <div className="modal-header">
+        <h2>{isCreateMode ? "Добавить доход" : "Изменить доход"}</h2>
+      </div>
+      <div className="modal-form">
+        <label className="field">
+          <span className="field-head"><span>Дата *</span></span>
+          <input type="date" value={form.incomeDate} onChange={(event) => setForm((current) => ({ ...current, incomeDate: event.target.value }))} />
+        </label>
+        <label className="field">
+          <span className="field-head"><span>Чей доход *</span></span>
+          <select value={form.owner} onChange={(event) => setForm((current) => ({ ...current, owner: event.target.value }))}>
+            {cashflowIncomeOwnerOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span>Тип дохода *</span></span>
+          <select value={form.incomeType} onChange={(event) => setForm((current) => ({ ...current, incomeType: event.target.value }))}>
+            {cashflowIncomeTypeOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span>Статус *</span></span>
+          <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}>
+            {cashflowIncomeStatusOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span>Ожидаемая сумма</span></span>
+          <div className="input-with-suffix">
+            <input value={form.expectedAmount} onChange={(event) => setForm((current) => ({ ...current, expectedAmount: parseDigits(event.target.value) }))} />
+            <span>{form.currency}</span>
+          </div>
+        </label>
+        <label className="field">
+          <span className="field-head"><span>Фактическая сумма</span></span>
+          <div className="input-with-suffix">
+            <input value={form.actualAmount} onChange={(event) => setForm((current) => ({ ...current, actualAmount: parseDigits(event.target.value) }))} />
+            <span>{form.currency}</span>
+          </div>
+        </label>
+        <label className="field">
+          <span className="field-head"><span>Валюта *</span></span>
+          <select value={form.currency} onChange={(event) => setForm((current) => ({ ...current, currency: event.target.value }))}>
+            {cashflowCurrencyOptions.map((currency) => (
+              <option key={currency} value={currency}>{currency}</option>
+            ))}
+          </select>
+        </label>
+        {form.currency !== "CZK" ? (
+          <label className="field">
+            <span className="field-head"><span>Курс к CZK *</span></span>
+            <input value={form.exchangeRateToCzk} onChange={(event) => setForm((current) => ({ ...current, exchangeRateToCzk: event.target.value.replace(/[^0-9.,]/g, "").replace(",", ".") }))} />
+          </label>
+        ) : null}
+        <label className="field">
+          <span className="field-head"><span>Комментарий</span></span>
+          <textarea rows={3} value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} />
+        </label>
+      </div>
+      <div className="editor-footer">
+        <div className="editor-actions">
+          <button className="secondary-action-button" type="button" onClick={onClose}>Отмена</button>
+          <button className="primary-action-button" type="button" disabled={!isValid} onClick={handleSave}>Сохранить</button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function CashflowSnapshotEditorModal({ snapshot, accounts, funds, onClose, onSave }) {
+  const isCreateMode = !snapshot;
+  const [form, setForm] = useState(() => ({
+    accountId: snapshot?.accountId ?? "",
+    newAccountName: "",
+    accountOwner: snapshot?.owner ?? "shared",
+    accountType: "bank",
+    defaultCurrency: snapshot?.currency ?? DEFAULT_CASHFLOW_CURRENCY,
+    fundId: snapshot?.fundId ?? funds.find((item) => item.fundType === "budget_reserve")?.id ?? "",
+    snapshotDate: snapshot?.snapshotDate ?? getTodaySqlDate(),
+    amount: snapshot ? String(snapshot.amount) : "",
+    currency: snapshot?.currency ?? DEFAULT_CASHFLOW_CURRENCY,
+    exchangeRateToCzk:
+      snapshot?.exchangeRateToCzk && snapshot.exchangeRateToCzk !== 1
+        ? String(snapshot.exchangeRateToCzk)
+        : "",
+    assetType: snapshot?.assetType ?? "bank_account",
+    owner: snapshot?.owner ?? "shared",
+  }));
+
+  const selectedAccount = accounts.find((account) => account.id === form.accountId);
+  const rate = form.currency === "CZK" ? 1 : Number(form.exchangeRateToCzk || 0);
+  const amount = Number(form.amount || 0);
+  const isValid =
+    form.snapshotDate &&
+    amount > 0 &&
+    form.fundId &&
+    (form.accountId || form.newAccountName.trim()) &&
+    (form.currency === "CZK" || rate > 0);
+
+  const handleSave = () => {
+    if (!isValid) {
+      return;
+    }
+
+    onSave(
+      {
+        ...(snapshot ?? {}),
+        accountId: form.accountId,
+        fundId: form.fundId,
+        snapshotDate: form.snapshotDate,
+        amount,
+        currency: form.currency,
+        amountCzk: Math.round(amount * (form.currency === "CZK" ? 1 : rate)),
+        exchangeRateToCzk: form.currency === "CZK" ? 1 : rate,
+        assetType: form.assetType,
+        owner: form.owner,
+      },
+      !form.accountId
+        ? {
+            name: form.newAccountName,
+            owner: form.accountOwner,
+            accountType: form.accountType,
+            defaultCurrency: form.defaultCurrency,
+          }
+        : null,
+    );
+  };
+
+  return (
+    <ModalShell title={isCreateMode ? "Снимок баланса" : "Изменить снимок баланса"} onClose={onClose} compact>
+      <div className="modal-header">
+        <h2>{isCreateMode ? "Add/update balance snapshot" : "Изменить снимок"}</h2>
+      </div>
+      <div className="modal-form">
+        <label className="field">
+          <span className="field-head"><span>Счёт / место хранения *</span></span>
+          <select value={form.accountId} onChange={(event) => setForm((current) => ({ ...current, accountId: event.target.value }))}>
+            <option value="">Создать новый</option>
+            {accounts.map((account) => (
+              <option key={account.id} value={account.id}>{account.name}</option>
+            ))}
+          </select>
+        </label>
+        {!form.accountId ? (
+          <>
+            <label className="field">
+              <span className="field-head"><span>Название счёта *</span></span>
+              <input value={form.newAccountName} onChange={(event) => setForm((current) => ({ ...current, newAccountName: event.target.value }))} />
+            </label>
+            <label className="field">
+              <span className="field-head"><span>Владелец счёта</span></span>
+              <select value={form.accountOwner} onChange={(event) => setForm((current) => ({ ...current, accountOwner: event.target.value }))}>
+                {cashflowIncomeOwnerOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+            <label className="field">
+              <span className="field-head"><span>Тип счёта</span></span>
+              <select value={form.accountType} onChange={(event) => setForm((current) => ({ ...current, accountType: event.target.value }))}>
+                {cashflowAccountTypeOptions.map((option) => (
+                  <option key={option.value} value={option.value}>{option.label}</option>
+                ))}
+              </select>
+            </label>
+          </>
+        ) : null}
+        <label className="field">
+          <span className="field-head"><span>Фонд *</span></span>
+          <select value={form.fundId} onChange={(event) => setForm((current) => ({ ...current, fundId: event.target.value }))}>
+            {funds.filter((fund) => fund.isActive).map((fund) => (
+              <option key={fund.id} value={fund.id}>{fund.name}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span>Дата снимка *</span></span>
+          <input type="date" value={form.snapshotDate} onChange={(event) => setForm((current) => ({ ...current, snapshotDate: event.target.value }))} />
+        </label>
+        <label className="field">
+          <span className="field-head"><span>Сумма *</span></span>
+          <div className="input-with-suffix">
+            <input value={form.amount} onChange={(event) => setForm((current) => ({ ...current, amount: parseDigits(event.target.value) }))} />
+            <span>{form.currency}</span>
+          </div>
+        </label>
+        <label className="field">
+          <span className="field-head"><span>Валюта *</span></span>
+          <select value={form.currency} onChange={(event) => setForm((current) => ({ ...current, currency: event.target.value }))}>
+            {cashflowCurrencyOptions.map((currency) => (
+              <option key={currency} value={currency}>{currency}</option>
+            ))}
+          </select>
+        </label>
+        {form.currency !== "CZK" ? (
+          <label className="field">
+            <span className="field-head"><span>Курс к CZK *</span></span>
+            <input value={form.exchangeRateToCzk} onChange={(event) => setForm((current) => ({ ...current, exchangeRateToCzk: event.target.value.replace(/[^0-9.,]/g, "").replace(",", ".") }))} />
+          </label>
+        ) : null}
+        <label className="field">
+          <span className="field-head"><span>Тип актива</span></span>
+          <select value={form.assetType} onChange={(event) => setForm((current) => ({ ...current, assetType: event.target.value }))}>
+            {cashflowAssetTypeOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+        </label>
+      </div>
+      <div className="editor-footer">
+        <div className="editor-actions">
+          <button className="secondary-action-button" type="button" onClick={onClose}>Отмена</button>
+          <button className="primary-action-button" type="button" disabled={!isValid} onClick={handleSave}>Сохранить</button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function CashflowReserveEditorModal({ settings, funds, onClose, onSave }) {
+  const budgetFund = funds.find((fund) => fund.fundType === "budget_reserve");
+  const emergencyFund = funds.find((fund) => fund.fundType === "emergency_reserve");
+  const [form, setForm] = useState(() => ({
+    baseCurrency: settings.baseCurrency,
+    mandatoryBudgetAverageMonths: String(settings.mandatoryBudgetAverageMonths),
+    budgetReserveTargetMode: budgetFund?.targetMode ?? "auto_average_mandatory_budget",
+    budgetReserveMonthsMultiplier: String(budgetFund?.targetMultiplier ?? settings.budgetReserveMonthsMultiplier),
+    budgetReserveManualTarget: budgetFund?.manualTargetAmount ? String(budgetFund.manualTargetAmount) : "",
+    emergencyReserveTargetMode: emergencyFund?.targetMode ?? "auto_average_mandatory_budget",
+    emergencyReserveMonthsMultiplier: String(emergencyFund?.targetMultiplier ?? settings.emergencyReserveMonthsMultiplier),
+    emergencyReserveManualTarget: emergencyFund?.manualTargetAmount ? String(emergencyFund.manualTargetAmount) : "",
+  }));
+
+  const handleSave = () => {
+    const nextSettings = normalizeCashflowSettings({
+      ...settings,
+      baseCurrency: form.baseCurrency,
+      mandatoryBudgetAverageMonths: Number(form.mandatoryBudgetAverageMonths || 6),
+      budgetReserveMonthsMultiplier: Number(form.budgetReserveMonthsMultiplier || 2),
+      emergencyReserveMonthsMultiplier: Number(form.emergencyReserveMonthsMultiplier || 3),
+      budgetReserveManualTarget: form.budgetReserveManualTarget ? Number(form.budgetReserveManualTarget) : null,
+      emergencyReserveManualTarget: form.emergencyReserveManualTarget ? Number(form.emergencyReserveManualTarget) : null,
+    });
+
+    const nextFunds = funds.map((fund) => {
+      if (fund.fundType === "budget_reserve") {
+        return {
+          ...fund,
+          targetMode: form.budgetReserveTargetMode,
+          targetMultiplier: Number(form.budgetReserveMonthsMultiplier || 2),
+          manualTargetAmount: form.budgetReserveManualTarget ? Number(form.budgetReserveManualTarget) : null,
+          currency: form.baseCurrency,
+        };
+      }
+
+      if (fund.fundType === "emergency_reserve") {
+        return {
+          ...fund,
+          targetMode: form.emergencyReserveTargetMode,
+          targetMultiplier: Number(form.emergencyReserveMonthsMultiplier || 3),
+          manualTargetAmount: form.emergencyReserveManualTarget ? Number(form.emergencyReserveManualTarget) : null,
+          currency: form.baseCurrency,
+        };
+      }
+
+      return fund;
+    });
+
+    onSave(nextSettings, nextFunds);
+  };
+
+  return (
+    <ModalShell title="Настройка резервов" onClose={onClose} compact>
+      <div className="modal-header">
+        <h2>Configure reserves</h2>
+      </div>
+      <div className="modal-form">
+        <label className="field">
+          <span className="field-head"><span>Базовая валюта</span></span>
+          <select value={form.baseCurrency} onChange={(event) => setForm((current) => ({ ...current, baseCurrency: event.target.value }))}>
+            {cashflowCurrencyOptions.map((currency) => (
+              <option key={currency} value={currency}>{currency}</option>
+            ))}
+          </select>
+        </label>
+        <label className="field">
+          <span className="field-head"><span>Среднее обязательных бюджетов, мес.</span></span>
+          <input value={form.mandatoryBudgetAverageMonths} onChange={(event) => setForm((current) => ({ ...current, mandatoryBudgetAverageMonths: parseDigits(event.target.value) }))} />
+        </label>
+        <div className="field">
+          <span className="field-head"><span>Бюджетная кубышка</span></span>
+          <select value={form.budgetReserveTargetMode} onChange={(event) => setForm((current) => ({ ...current, budgetReserveTargetMode: event.target.value }))}>
+            {cashflowTargetModeOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          {form.budgetReserveTargetMode === "manual" ? (
+            <input value={form.budgetReserveManualTarget} placeholder="160000" onChange={(event) => setForm((current) => ({ ...current, budgetReserveManualTarget: parseDigits(event.target.value) }))} />
+          ) : (
+            <input value={form.budgetReserveMonthsMultiplier} placeholder="2" onChange={(event) => setForm((current) => ({ ...current, budgetReserveMonthsMultiplier: parseDigits(event.target.value) }))} />
+          )}
+        </div>
+        <div className="field">
+          <span className="field-head"><span>Сейф безопасности</span></span>
+          <select value={form.emergencyReserveTargetMode} onChange={(event) => setForm((current) => ({ ...current, emergencyReserveTargetMode: event.target.value }))}>
+            {cashflowTargetModeOptions.map((option) => (
+              <option key={option.value} value={option.value}>{option.label}</option>
+            ))}
+          </select>
+          {form.emergencyReserveTargetMode === "manual" ? (
+            <input value={form.emergencyReserveManualTarget} placeholder="240000" onChange={(event) => setForm((current) => ({ ...current, emergencyReserveManualTarget: parseDigits(event.target.value) }))} />
+          ) : (
+            <input value={form.emergencyReserveMonthsMultiplier} placeholder="3" onChange={(event) => setForm((current) => ({ ...current, emergencyReserveMonthsMultiplier: parseDigits(event.target.value) }))} />
+          )}
+        </div>
+      </div>
+      <div className="editor-footer">
+        <div className="editor-actions">
+          <button className="secondary-action-button" type="button" onClick={onClose}>Отмена</button>
+          <button className="primary-action-button" type="button" onClick={handleSave}>Сохранить</button>
+        </div>
+      </div>
+    </ModalShell>
+  );
+}
+
+function CashflowScreen({
+  currentMonthLabel,
+  nextMonthLabel,
+  totalCapitalCzk,
+  budgetReserveCurrent,
+  budgetReserveTarget,
+  emergencyReserveCurrent,
+  emergencyReserveTarget,
+  nextMonthBudgetTotal,
+  payerAllocation,
+  budgetReserveReplenishment,
+  incomeWaterfall,
+  warnings,
+  accounts,
+  funds,
+  snapshots,
+  incomeEvents,
+  errorMessage = "",
+  onAddIncome,
+  onAddSnapshot,
+  onConfigureReserves,
+  onRecalculate,
+}) {
+  const latestSnapshots = [...snapshots]
+    .sort((left, right) => new Date(right.snapshotDate).getTime() - new Date(left.snapshotDate).getTime())
+    .slice(0, 5)
+    .map((snapshot) => {
+      const account = accounts.find((item) => item.id === snapshot.accountId);
+      const fund = funds.find((item) => item.id === snapshot.fundId);
+      return {
+        ...snapshot,
+        accountName: account?.name ?? "Счёт",
+        fundName: fund?.name ?? getCashflowSystemFundLabel(fund?.fundType),
+      };
+    });
+
+  const currentMonthIncomeRows = [...incomeEvents]
+    .sort((left, right) => new Date(right.incomeDate).getTime() - new Date(left.incomeDate).getTime())
+    .slice(0, 5);
+
+  return (
+    <>
+      <header className="page-header">
+        <p className="eyebrow">Потоки денег</p>
+        <h1>Cashflow</h1>
+        <p className="page-note">
+          Планируй, где лежат деньги, как финансируется следующий месяц и сколько нужно восстановить в резервы.
+        </p>
+      </header>
+
+      {errorMessage ? (
+        <section className="card cashflow-panel">
+          <div className="cashflow-warning-list">
+            <div className="cashflow-warning-chip">{errorMessage}</div>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="cashflow-header-strip card">
+        <div>
+          <strong>Текущий месяц</strong>
+          <span>{currentMonthLabel}</span>
+        </div>
+        <div>
+          <strong>Следующий бюджетный месяц</strong>
+          <span>{nextMonthLabel}</span>
+        </div>
+        <div className="cashflow-header-actions">
+          <button className="secondary-action-button" type="button" onClick={onAddIncome}>Add income</button>
+          <button className="secondary-action-button" type="button" onClick={onAddSnapshot}>Add/update balance snapshot</button>
+          <button className="secondary-action-button" type="button" onClick={onConfigureReserves}>Configure reserves</button>
+          <button className="primary-action-button" type="button" onClick={onRecalculate}>Recalculate cashflow</button>
+        </div>
+      </section>
+
+      <div className="cashflow-summary-grid">
+        <CashflowMetricCard label="Total capital in CZK" value={`${formatCurrency(totalCapitalCzk)} Kč`} />
+        <CashflowMetricCard
+          label="Budget Reserve"
+          value={`${formatCurrency(budgetReserveCurrent)} / ${formatCurrency(budgetReserveTarget)} Kč`}
+          note="current / target"
+          accent={budgetReserveCurrent < budgetReserveTarget}
+        />
+        <CashflowMetricCard
+          label="Emergency Reserve"
+          value={`${formatCurrency(emergencyReserveCurrent)} / ${formatCurrency(emergencyReserveTarget)} Kč`}
+          note="current / target"
+          accent={emergencyReserveCurrent < emergencyReserveTarget}
+        />
+        <CashflowMetricCard
+          label="Required Budget Reserve replenishment"
+          value={`${formatCurrency(budgetReserveReplenishment.replenishmentRequired)} Kč`}
+          note={budgetReserveReplenishment.deficit ? `deficit ${formatCurrency(budgetReserveReplenishment.deficit)} Kč` : ""}
+        />
+        <CashflowMetricCard
+          label="Available after reserves"
+          value={`${formatCurrency(incomeWaterfall.availableForInvestments)} Kč`}
+          note="for investments / savings / free balance"
+        />
+      </div>
+
+      <div className="cashflow-layout">
+        <section className="card cashflow-panel">
+          <div className="cashflow-panel-head">
+            <h2>Следующий бюджетный месяц</h2>
+            <span>{nextMonthLabel}</span>
+          </div>
+          <div className="cashflow-details">
+            <CashflowDetailRow label="Бюджет месяца" value={`${formatCurrency(nextMonthBudgetTotal)} Kč`} />
+            <CashflowDetailRow
+              label="Выделить из Budget Reserve"
+              value={`${formatCurrency(budgetReserveReplenishment.fundingAmount)} Kč`}
+              hint={
+                budgetReserveReplenishment.deficit
+                  ? `Не хватает ${formatCurrency(budgetReserveReplenishment.deficit)} Kč`
+                  : "Хватает на весь следующий месяц"
+              }
+              danger={budgetReserveReplenishment.deficit > 0}
+            />
+          </div>
+        </section>
+
+        <section className="card cashflow-panel">
+          <div className="cashflow-panel-head">
+            <h2>Кому сколько перевести</h2>
+            <span>по payer</span>
+          </div>
+          <div className="cashflow-details">
+            <CashflowDetailRow label="Роме" value={`${formatCurrency(payerAllocation.roma)} Kč`} />
+            <CashflowDetailRow label="Саше" value={`${formatCurrency(payerAllocation.sasha)} Kč`} />
+            <CashflowDetailRow
+              label="Без payer"
+              value={`${formatCurrency(payerAllocation.unassigned)} Kč`}
+              danger={payerAllocation.unassigned > 0}
+            />
+          </div>
+        </section>
+
+        <section className="card cashflow-panel">
+          <div className="cashflow-panel-head">
+            <h2>Восстановление бюджетной кубышки</h2>
+            <span>после финансирования месяца</span>
+          </div>
+          <div className="cashflow-details">
+            <CashflowDetailRow label="Выделено на следующий месяц" value={`${formatCurrency(budgetReserveReplenishment.fundingAmount)} Kč`} />
+            <CashflowDetailRow label="Нужно восстановить" value={`${formatCurrency(budgetReserveReplenishment.replenishmentRequired)} Kč`} />
+            <CashflowDetailRow label="Уже покрыто income" value={`${formatCurrency(incomeWaterfall.budgetReserveCovered)} Kč`} />
+            <CashflowDetailRow
+              label="Осталось восстановить"
+              value={`${formatCurrency(Math.max(incomeWaterfall.budgetReserveNeed - incomeWaterfall.budgetReserveCovered, 0))} Kč`}
+              danger={incomeWaterfall.budgetReserveCovered < incomeWaterfall.budgetReserveNeed}
+            />
+          </div>
+        </section>
+
+        <section className="card cashflow-panel">
+          <div className="cashflow-panel-head">
+            <h2>Waterfall доходов</h2>
+            <span>received this month</span>
+          </div>
+          <div className="cashflow-details">
+            <CashflowDetailRow label="Received income this month" value={`${formatCurrency(incomeWaterfall.receivedIncome)} Kč`} />
+            <CashflowDetailRow
+              label="Priority 1 · Budget Reserve"
+              value={`${formatCurrency(incomeWaterfall.budgetReserveCovered)} / ${formatCurrency(incomeWaterfall.budgetReserveNeed)} Kč`}
+            />
+            <CashflowDetailRow
+              label="Priority 2 · Emergency Reserve"
+              value={`${formatCurrency(incomeWaterfall.emergencyReserveCovered)} / ${formatCurrency(incomeWaterfall.emergencyReserveNeed)} Kč`}
+            />
+            <CashflowDetailRow
+              label="Priority 3 · Investments / Savings"
+              value={`${formatCurrency(incomeWaterfall.availableForInvestments)} Kč`}
+            />
+          </div>
+        </section>
+
+        <section className="card cashflow-panel">
+          <div className="cashflow-panel-head">
+            <h2>Warnings</h2>
+            <span>{warnings.length}</span>
+          </div>
+          {warnings.length ? (
+            <div className="cashflow-warning-list">
+              {warnings.map((warning) => (
+                <div key={warning} className="cashflow-warning-chip">{warning}</div>
+              ))}
+            </div>
+          ) : (
+            <div className="cashflow-empty">Пока предупреждений нет.</div>
+          )}
+        </section>
+
+        <section className="card cashflow-panel">
+          <div className="cashflow-panel-head">
+            <h2>Последние снимки баланса</h2>
+            <span>{snapshots.length}</span>
+          </div>
+          {latestSnapshots.length ? (
+            <div className="cashflow-mini-list">
+              {latestSnapshots.map((snapshot) => (
+                <CashflowDetailRow
+                  key={snapshot.id}
+                  label={`${snapshot.accountName} · ${snapshot.fundName}`}
+                  hint={snapshot.snapshotDate}
+                  value={`${formatCurrency(snapshot.amountCzk)} Kč`}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="cashflow-empty">Пока нет снимков баланса.</div>
+          )}
+        </section>
+
+        <section className="card cashflow-panel">
+          <div className="cashflow-panel-head">
+            <h2>Доходы</h2>
+            <span>{incomeEvents.length}</span>
+          </div>
+          {currentMonthIncomeRows.length ? (
+            <div className="cashflow-mini-list">
+              {currentMonthIncomeRows.map((event) => (
+                <CashflowDetailRow
+                  key={event.id}
+                  label={`${getCashflowIncomeTypeLabel(event.incomeType)} · ${getCashflowOwnerLabel(event.owner)}`}
+                  hint={`${event.incomeDate} · ${event.status === "received" ? "received" : "expected"}`}
+                  value={`${formatCurrency(event.amountCzk)} Kč`}
+                />
+              ))}
+            </div>
+          ) : (
+            <div className="cashflow-empty">Пока нет доходов для текущего месяца.</div>
+          )}
+        </section>
+      </div>
+    </>
+  );
+}
+
 function RegularExpenseEditorModal({ template, defaults, categories, currentMonthContext, onClose, onSave }) {
   const isCreateMode = !template;
   const nextMonthContext = getNextMonthContext(currentMonthContext);
@@ -3586,6 +4953,12 @@ export default function App() {
   const [regularEditorState, setRegularEditorState] = useState(null);
   const [regularConfirmState, setRegularConfirmState] = useState(null);
   const [resetConfirmState, setResetConfirmState] = useState(null);
+  const [cashflowState, setCashflowState] = useState(getInitialCashflowState);
+  const [cashflowHydrated, setCashflowHydrated] = useState(!isSupabaseConfigured);
+  const [cashflowError, setCashflowError] = useState("");
+  const [incomeEditorState, setIncomeEditorState] = useState(null);
+  const [snapshotEditorState, setSnapshotEditorState] = useState(null);
+  const [cashflowReserveEditorOpen, setCashflowReserveEditorOpen] = useState(false);
   const [selectedPeriodContext, setSelectedPeriodContext] = useState(initialNavigationState.periodContext);
   const [supabaseHouseholdId, setSupabaseHouseholdId] = useState(null);
   const [dbHydrated, setDbHydrated] = useState(!isSupabaseConfigured);
@@ -3606,6 +4979,11 @@ export default function App() {
   latestSnapshotRef.current = normalizeBudgetSnapshot({ members, categories, regularExpenses });
 
   const currentNavigationLabel = getScreenNavigationLabel(currentScreen, selectedPeriodContext);
+  const cashflowAccounts = cashflowState.accounts;
+  const cashflowFunds = cashflowState.funds;
+  const cashflowSnapshots = cashflowState.snapshots;
+  const cashflowIncomeEvents = cashflowState.incomeEvents;
+  const cashflowSettings = cashflowState.settings;
 
   const handleNavigate = (item, index) => {
     setMobileNavOpen(false);
@@ -3613,6 +4991,11 @@ export default function App() {
     if (index === 0) {
       setSelectedPeriodContext(null);
       setCurrentScreen("months");
+      return;
+    }
+    if (item === "Cashflow") {
+      setSelectedPeriodContext(null);
+      setCurrentScreen("cashflow");
       return;
     }
     if (item === "Настройка") {
@@ -3756,6 +5139,14 @@ export default function App() {
   }, [regularExpenses]);
 
   useEffect(() => {
+    if (isSupabaseConfigured) {
+      return;
+    }
+
+    window.localStorage.setItem(CASHFLOW_STORAGE_KEY, JSON.stringify(cashflowState));
+  }, [cashflowState]);
+
+  useEffect(() => {
     if (typeof window === "undefined") {
       return;
     }
@@ -3794,7 +5185,10 @@ export default function App() {
       yearConfirmState ||
       regularEditorState ||
       regularConfirmState ||
-      resetConfirmState
+      resetConfirmState ||
+      incomeEditorState ||
+      snapshotEditorState ||
+      cashflowReserveEditorOpen
     ) {
       document.body.style.overflow = "hidden";
       document.body.style.touchAction = "none";
@@ -3804,7 +5198,7 @@ export default function App() {
       document.body.style.overflow = previousOverflow;
       document.body.style.touchAction = previousTouchAction;
     };
-  }, [selectedExpense, selectedRegularTemplate, categoryEditorState, categoryConfirmState, yearConfirmState, regularEditorState, regularConfirmState, resetConfirmState]);
+  }, [selectedExpense, selectedRegularTemplate, categoryEditorState, categoryConfirmState, yearConfirmState, regularEditorState, regularConfirmState, resetConfirmState, incomeEditorState, snapshotEditorState, cashflowReserveEditorOpen]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -3952,6 +5346,45 @@ export default function App() {
       window.clearTimeout(timeoutId);
     };
   }, [categories, dbHydrated, members, regularExpenses, supabaseHouseholdId]);
+
+  useEffect(() => {
+    if (!isSupabaseConfigured) {
+      setCashflowHydrated(true);
+      return;
+    }
+
+    if (!authReady || !authUser || !supabaseHouseholdId) {
+      return;
+    }
+
+    let isCancelled = false;
+
+    const loadCashflow = async () => {
+      try {
+        setCashflowHydrated(false);
+        setCashflowError("");
+        const loadedState = await loadCashflowStateFromSupabase(supabaseHouseholdId);
+        if (isCancelled) {
+          return;
+        }
+        setCashflowState(loadedState);
+        setCashflowHydrated(true);
+      } catch (error) {
+        console.error("Cashflow load failed:", error);
+        if (isCancelled) {
+          return;
+        }
+        setCashflowError("Не удалось загрузить данные Cashflow.");
+        setCashflowHydrated(true);
+      }
+    };
+
+    loadCashflow();
+
+    return () => {
+      isCancelled = true;
+    };
+  }, [authReady, authUser, supabaseHouseholdId]);
 
   useEffect(() => {
     if (isSupabaseConfigured) {
@@ -4171,6 +5604,104 @@ export default function App() {
       })
       .sort((left, right) => right.amount - left.amount);
   }, [categories, selectedPeriodExpenses, selectedPeriodTotals.budget]);
+
+  const cashflowAverageMandatoryBudget = useMemo(
+    () =>
+      calculateAverageMandatoryBudget({
+        members,
+        regularExpenses,
+        currentContext: currentMonthContext,
+        months: cashflowSettings.mandatoryBudgetAverageMonths,
+      }),
+    [cashflowSettings.mandatoryBudgetAverageMonths, currentMonthContext, members, regularExpenses],
+  );
+
+  const budgetReserveFund = useMemo(
+    () => cashflowFunds.find((fund) => fund.fundType === "budget_reserve") ?? null,
+    [cashflowFunds],
+  );
+  const emergencyReserveFund = useMemo(
+    () => cashflowFunds.find((fund) => fund.fundType === "emergency_reserve") ?? null,
+    [cashflowFunds],
+  );
+  const budgetReserveCurrent = useMemo(
+    () => (budgetReserveFund ? calculateFundCurrentBalance({ fundId: budgetReserveFund.id, snapshots: cashflowSnapshots }) : 0),
+    [budgetReserveFund, cashflowSnapshots],
+  );
+  const emergencyReserveCurrent = useMemo(
+    () => (emergencyReserveFund ? calculateFundCurrentBalance({ fundId: emergencyReserveFund.id, snapshots: cashflowSnapshots }) : 0),
+    [cashflowSnapshots, emergencyReserveFund],
+  );
+  const budgetReserveTarget = useMemo(
+    () => calculateBudgetReserveTarget({ settings: cashflowSettings, funds: cashflowFunds, averageMandatoryBudget: cashflowAverageMandatoryBudget }),
+    [cashflowAverageMandatoryBudget, cashflowFunds, cashflowSettings],
+  );
+  const emergencyReserveTarget = useMemo(
+    () => calculateEmergencyReserveTarget({ settings: cashflowSettings, funds: cashflowFunds, averageMandatoryBudget: cashflowAverageMandatoryBudget }),
+    [cashflowAverageMandatoryBudget, cashflowFunds, cashflowSettings],
+  );
+  const nextMonthBudgetTotalForCashflow = useMemo(
+    () => calculateNextMonthBudgetTotal(projectedNextMonthExpenses),
+    [projectedNextMonthExpenses],
+  );
+  const nextMonthPayerAllocation = useMemo(
+    () => calculatePayerAllocationFromBudgetItems(projectedNextMonthExpenses),
+    [projectedNextMonthExpenses],
+  );
+  const budgetReserveReplenishment = useMemo(
+    () =>
+      calculateBudgetReserveReplenishment({
+        nextMonthBudgetTotal: nextMonthBudgetTotalForCashflow,
+        budgetReserveCurrent,
+      }),
+    [budgetReserveCurrent, nextMonthBudgetTotalForCashflow],
+  );
+  const incomeWaterfall = useMemo(
+    () =>
+      calculateIncomeWaterfall({
+        incomeEvents: cashflowIncomeEvents,
+        currentContext: currentMonthContext,
+        budgetReserveReplenishmentRequired: budgetReserveReplenishment.replenishmentRequired,
+        budgetReserveCurrent,
+        budgetReserveTarget,
+        emergencyReserveCurrent,
+        emergencyReserveTarget,
+      }),
+    [
+      budgetReserveCurrent,
+      budgetReserveReplenishment.replenishmentRequired,
+      budgetReserveTarget,
+      cashflowIncomeEvents,
+      currentMonthContext,
+      emergencyReserveCurrent,
+      emergencyReserveTarget,
+    ],
+  );
+  const cashflowWarnings = useMemo(
+    () =>
+      calculateCashflowWarnings({
+        nextMonthBudgetTotal: nextMonthBudgetTotalForCashflow,
+        budgetReserveCurrent,
+        budgetReserveTarget,
+        emergencyReserveCurrent,
+        emergencyReserveTarget,
+        payerAllocation: nextMonthPayerAllocation,
+        snapshots: cashflowSnapshots,
+      }),
+    [
+      budgetReserveCurrent,
+      budgetReserveTarget,
+      cashflowSnapshots,
+      emergencyReserveCurrent,
+      emergencyReserveTarget,
+      nextMonthBudgetTotalForCashflow,
+      nextMonthPayerAllocation,
+    ],
+  );
+  const cashflowTotalCapital = useMemo(
+    () => calculateTotalCapitalCzk({ snapshots: cashflowSnapshots }),
+    [cashflowSnapshots],
+  );
 
   const dashboardMembers = useMemo(() => {
     const payerGroups = Object.fromEntries(
@@ -4513,6 +6044,112 @@ export default function App() {
     }
   };
 
+  const reloadCashflowState = async () => {
+    if (!isSupabaseConfigured || !supabaseHouseholdId) {
+      return;
+    }
+
+    try {
+      setCashflowHydrated(false);
+      setCashflowError("");
+      const loadedState = await loadCashflowStateFromSupabase(supabaseHouseholdId);
+      setCashflowState(loadedState);
+    } catch (error) {
+      console.error("Cashflow reload failed:", error);
+      setCashflowError("Не удалось пересчитать или загрузить данные Cashflow.");
+    } finally {
+      setCashflowHydrated(true);
+    }
+  };
+
+  const handleSaveCashflowIncome = async (eventDraft) => {
+    const normalizedEvent = normalizeCashflowIncomeEvent(eventDraft);
+
+    if (!isSupabaseConfigured || !supabaseHouseholdId) {
+      setCashflowState((current) =>
+        normalizeCashflowState({
+          ...current,
+          incomeEvents: [normalizedEvent, ...current.incomeEvents.filter((item) => item.id !== normalizedEvent.id)],
+        }),
+      );
+      setIncomeEditorState(null);
+      return;
+    }
+
+    const savedId = await saveCashflowIncomeEventToSupabase({
+      householdId: supabaseHouseholdId,
+      event: normalizedEvent,
+    });
+    await reloadCashflowState();
+    setIncomeEditorState(null);
+    return savedId;
+  };
+
+  const handleSaveCashflowSnapshot = async (snapshotDraft, accountDraft) => {
+    const normalizedSnapshot = normalizeCashflowSnapshot(snapshotDraft);
+
+    if (!isSupabaseConfigured || !supabaseHouseholdId) {
+      const nextAccount =
+        !normalizedSnapshot.accountId && accountDraft?.name?.trim()
+          ? normalizeCashflowAccount({
+              id: `cashflow-account-${Date.now()}`,
+              name: accountDraft.name.trim(),
+              owner: accountDraft.owner,
+              accountType: accountDraft.accountType,
+              defaultCurrency: accountDraft.defaultCurrency,
+            })
+          : null;
+      const accountId = normalizedSnapshot.accountId || nextAccount?.id || "";
+      setCashflowState((current) =>
+        normalizeCashflowState({
+          ...current,
+          accounts: nextAccount ? [...current.accounts, nextAccount] : current.accounts,
+          snapshots: [
+            { ...normalizedSnapshot, id: normalizedSnapshot.id || `cashflow-snapshot-${Date.now()}`, accountId },
+            ...current.snapshots.filter((item) => item.id !== normalizedSnapshot.id),
+          ],
+        }),
+      );
+      setSnapshotEditorState(null);
+      return;
+    }
+
+    await saveCashflowSnapshotToSupabase({
+      householdId: supabaseHouseholdId,
+      snapshot: normalizedSnapshot,
+      accountDraft,
+      existingAccounts: cashflowAccounts,
+    });
+    await reloadCashflowState();
+    setSnapshotEditorState(null);
+  };
+
+  const handleSaveCashflowReserves = async (nextSettings, nextFunds) => {
+    const normalizedState = normalizeCashflowState({
+      accounts: cashflowAccounts,
+      funds: nextFunds,
+      snapshots: cashflowSnapshots,
+      incomeEvents: cashflowIncomeEvents,
+      settings: nextSettings,
+    });
+
+    if (!isSupabaseConfigured || !supabaseHouseholdId) {
+      setCashflowState(normalizedState);
+      setCashflowReserveEditorOpen(false);
+      return;
+    }
+
+    await saveCashflowSettingsToSupabase({
+      householdId: supabaseHouseholdId,
+      settings: normalizedState.settings,
+      funds: normalizedState.funds.filter((fund) =>
+        fund.fundType === "budget_reserve" || fund.fundType === "emergency_reserve",
+      ),
+    });
+    await reloadCashflowState();
+    setCashflowReserveEditorOpen(false);
+  };
+
   if (!authReady) {
     return (
       <main className="app-shell app-loading-shell">
@@ -4548,6 +6185,21 @@ export default function App() {
           </div>
           <h1>Подключаем данные бюджета</h1>
           <p>Сейчас загрузим категории, траты и шаблоны из Supabase.</p>
+        </section>
+      </main>
+    );
+  }
+
+  if (currentScreen === "cashflow" && !cashflowHydrated) {
+    return (
+      <main className="app-shell app-loading-shell">
+        <section className="app-loading-card" aria-live="polite">
+          <div className="app-loading-badge">
+            <span className="brand-accent" />
+            Family Budget
+          </div>
+          <h1>Собираем Cashflow</h1>
+          <p>Подтягиваем счета, резервы, снимки баланса и доходы из Supabase.</p>
         </section>
       </main>
     );
@@ -5274,6 +6926,32 @@ export default function App() {
             />
           ) : null}
 
+          {currentScreen === "cashflow" ? (
+            <CashflowScreen
+              currentMonthLabel={currentMonthLabel}
+              nextMonthLabel={nextMonthLabel}
+              totalCapitalCzk={cashflowTotalCapital}
+              budgetReserveCurrent={budgetReserveCurrent}
+              budgetReserveTarget={budgetReserveTarget}
+              emergencyReserveCurrent={emergencyReserveCurrent}
+              emergencyReserveTarget={emergencyReserveTarget}
+              nextMonthBudgetTotal={nextMonthBudgetTotalForCashflow}
+              payerAllocation={nextMonthPayerAllocation}
+              budgetReserveReplenishment={budgetReserveReplenishment}
+              incomeWaterfall={incomeWaterfall}
+              warnings={cashflowWarnings}
+              accounts={cashflowAccounts}
+              funds={cashflowFunds}
+              snapshots={cashflowSnapshots}
+              incomeEvents={cashflowIncomeEvents}
+              errorMessage={cashflowError}
+              onAddIncome={() => setIncomeEditorState({})}
+              onAddSnapshot={() => setSnapshotEditorState({})}
+              onConfigureReserves={() => setCashflowReserveEditorOpen(true)}
+              onRecalculate={reloadCashflowState}
+            />
+          ) : null}
+
           {currentScreen === "categories" ? (
             <CategorySettingsScreen
               categories={categories}
@@ -5418,6 +7096,33 @@ export default function App() {
           description={resetConfirmState.description}
           onClose={() => setResetConfirmState(null)}
           onConfirm={resetConfirmState.onConfirm}
+        />
+      ) : null}
+
+      {incomeEditorState ? (
+        <CashflowIncomeEditorModal
+          incomeEvent={incomeEditorState}
+          onClose={() => setIncomeEditorState(null)}
+          onSave={handleSaveCashflowIncome}
+        />
+      ) : null}
+
+      {snapshotEditorState ? (
+        <CashflowSnapshotEditorModal
+          snapshot={snapshotEditorState}
+          accounts={cashflowAccounts}
+          funds={cashflowFunds}
+          onClose={() => setSnapshotEditorState(null)}
+          onSave={handleSaveCashflowSnapshot}
+        />
+      ) : null}
+
+      {cashflowReserveEditorOpen ? (
+        <CashflowReserveEditorModal
+          settings={cashflowSettings}
+          funds={cashflowFunds}
+          onClose={() => setCashflowReserveEditorOpen(false)}
+          onSave={handleSaveCashflowReserves}
         />
       ) : null}
     </>
