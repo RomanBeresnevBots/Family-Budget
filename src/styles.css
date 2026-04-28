@@ -260,6 +260,7 @@ input {
   background: linear-gradient(180deg, rgba(255, 252, 247, 0.95), rgba(241, 247, 242, 0.92));
   border: 1px solid rgba(219, 227, 218, 0.9);
   box-shadow: var(--shadow-soft);
+  margin-top: auto;
 }
 
 .session-main {
@@ -332,6 +333,7 @@ input {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  margin-top: -6px;
 }
 
 .nav-item {
@@ -1112,13 +1114,38 @@ input {
   border: 0;
   width: 100%;
   display: grid;
-  grid-template-columns: minmax(220px, 1fr) minmax(120px, auto) minmax(130px, auto) minmax(120px, auto) minmax(110px, auto);
+  grid-template-columns: minmax(220px, 1fr) minmax(130px, auto) minmax(120px, auto) minmax(110px, auto);
   align-items: center;
   gap: 18px;
   padding: 0;
   background: transparent;
   text-align: left;
   cursor: pointer;
+}
+
+.budget-data-main {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.budget-data-copy {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.budget-data-category-icon {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border-radius: 12px;
+  background: rgba(255, 250, 243, 0.9);
+  color: var(--ink-main);
+  font-size: 1.05rem;
+  flex: 0 0 auto;
 }
 
 .budget-data-title {
@@ -1130,16 +1157,6 @@ input {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-.budget-data-category {
-  color: #859285;
-  font-size: var(--text-small);
-  font-weight: 700;
-  line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
 }
 
 .budget-data-note {
@@ -1206,7 +1223,6 @@ input {
   color: #7a857d;
 }
 
-.budget-data-button.completed .budget-data-category,
 .budget-data-button.completed .budget-data-kind,
 .budget-data-button.completed .budget-data-due {
   color: #9aa69d;
@@ -1405,6 +1421,19 @@ input {
   line-height: 1.5;
 }
 
+.budget-entry-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.months-utility-bar {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: -2px;
+}
+
 .years-stack {
   display: grid;
   gap: 16px;
@@ -1491,6 +1520,8 @@ input {
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.74);
   border: 1px solid rgba(222, 231, 223, 0.95);
+  text-align: left;
+  cursor: pointer;
 }
 
 .month-row.current {
@@ -1503,6 +1534,7 @@ input {
   align-items: center;
   gap: 12px;
   min-width: 0;
+  flex: 1 1 auto;
 }
 
 .month-row-icon {
@@ -1525,20 +1557,12 @@ input {
   font-weight: 800;
 }
 
-.month-row-meta {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px 14px;
-  margin-top: 4px;
-  color: var(--ink-soft);
-  font-size: var(--text-small);
-  font-weight: 700;
-}
-
 .month-row-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
+  display: grid;
+  justify-items: end;
+  gap: 4px;
+  min-width: 150px;
+  flex: 0 0 auto;
 }
 
 .month-current-badge {
@@ -1549,6 +1573,19 @@ input {
   font-size: var(--text-small);
   font-weight: 800;
   white-space: nowrap;
+}
+
+.month-budget-label {
+  color: var(--ink-soft);
+  font-size: var(--text-small);
+  font-weight: 700;
+}
+
+.month-budget-value {
+  color: var(--ink-main);
+  font-size: 1.05rem;
+  font-weight: 800;
+  line-height: 1.1;
 }
 
 .category-settings-layout {
@@ -2036,7 +2073,7 @@ input {
   }
 
   .budget-data-button {
-    grid-template-columns: minmax(180px, 1fr) minmax(110px, auto) minmax(120px, auto) minmax(110px, auto) minmax(100px, auto);
+    grid-template-columns: minmax(180px, 1fr) minmax(120px, auto) minmax(110px, auto) minmax(100px, auto);
   }
 
   .row-edit-button {
@@ -2045,7 +2082,6 @@ input {
 
   .months-summary-card,
   .year-card-head,
-  .month-row,
   .year-card-footer {
     flex-direction: column;
     align-items: stretch;
@@ -2055,6 +2091,15 @@ input {
   .month-row-actions {
     justify-content: flex-start;
     flex-wrap: wrap;
+  }
+
+  .budget-entry-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
+
+  .months-utility-bar {
+    justify-content: flex-start;
   }
 
   .regular-summary-metrics {
@@ -2127,6 +2172,19 @@ input {
   .months-summary-card,
   .year-card {
     padding: 16px;
+  }
+
+  .budget-entry-actions {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .months-utility-bar {
+    margin-top: 8px;
+  }
+
+  .months-utility-bar .secondary-action-button {
+    width: 100%;
   }
 
   .month-name,
@@ -2346,8 +2404,7 @@ input {
   }
 
   .budget-data-due,
-  .budget-data-kind,
-  .budget-data-category {
+  .budget-data-kind {
     display: none;
   }
 
@@ -2373,7 +2430,18 @@ input {
 
   .budget-data-main {
     min-width: 0;
-    gap: 3px;
+    gap: 10px;
+  }
+
+  .budget-data-copy {
+    gap: 2px;
+  }
+
+  .budget-data-category-icon {
+    width: 34px;
+    height: 34px;
+    border-radius: 13px;
+    font-size: 1.15rem;
   }
 
   .budget-data-actions {
@@ -2403,7 +2471,7 @@ input {
   }
 
   .month-row-main {
-    align-items: flex-start;
+    align-items: center;
   }
 
   .month-row-icon {
@@ -2414,6 +2482,17 @@ input {
 
   .month-row-name {
     font-size: 0.96rem;
+  }
+
+  .month-row {
+    gap: 12px;
+    align-items: center;
+  }
+
+  .month-row-actions {
+    min-width: 0;
+    width: auto;
+    justify-items: end;
   }
 
   .row-edit-button {

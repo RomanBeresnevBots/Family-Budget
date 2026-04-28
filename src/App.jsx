@@ -2,11 +2,7 @@ import { useEffect, useRef, useMemo, useState } from "react";
 import { getAuthRedirectUrl, isSupabaseConfigured, requireSupabase } from "./lib/supabase";
 
 const navigationItems = [
-  "Бюджет текущего месяца",
-  "Бюджет грядущего месяца",
-  "Регулярные траты",
-  "Запланировать трату",
-  "Периоды",
+  "Бюджет",
   "Аналитика",
   "Памятные даты",
   "Настройка",
@@ -446,6 +442,8 @@ const CATEGORY_STORAGE_KEY = "family-budget-prototype-categories-v2";
 const CATEGORY_ICON_COLOR_MIGRATION_KEY = "family-budget-prototype-category-icon-colors-v2";
 const REGULAR_EXPENSES_STORAGE_KEY = "family-budget-prototype-regular-expenses-v2";
 const STORAGE_RESET_KEY = "family-budget-prototype-storage-reset-v1";
+const TRACKED_YEARS_STORAGE_KEY = "family-budget-prototype-tracked-years-v1";
+const EXPANDED_YEARS_STORAGE_KEY = "family-budget-prototype-expanded-years-v1";
 const DEFAULT_HOUSEHOLD_NAME = "Family Budget";
 
 let prototypeStoragePrepared = false;
@@ -732,6 +730,64 @@ function getDefaultExpandedYears(currentYear = getCurrentMonthContext().year) {
     [currentYear - 1]: false,
     [currentYear - 2]: false,
   };
+}
+
+function getInitialTrackedYears() {
+  const currentYear = getCurrentMonthContext().year;
+
+  if (typeof window === "undefined") {
+    return getDefaultTrackedYears(currentYear);
+  }
+
+  try {
+    const savedValue = window.localStorage.getItem(TRACKED_YEARS_STORAGE_KEY);
+    if (!savedValue) {
+      return getDefaultTrackedYears(currentYear);
+    }
+
+    const parsed = JSON.parse(savedValue);
+    if (!Array.isArray(parsed)) {
+      return getDefaultTrackedYears(currentYear);
+    }
+
+    const normalized = [...new Set(parsed.map((value) => Number(value)).filter(Number.isFinite))].sort((left, right) => right - left);
+    return normalized.length ? normalized : [currentYear];
+  } catch {
+    return getDefaultTrackedYears(currentYear);
+  }
+}
+
+function getInitialExpandedYears(trackedYears) {
+  const currentYear = getCurrentMonthContext().year;
+  const fallbackYears = trackedYears.length ? trackedYears : [currentYear];
+
+  if (typeof window === "undefined") {
+    return getDefaultExpandedYears(currentYear);
+  }
+
+  try {
+    const savedValue = window.localStorage.getItem(EXPANDED_YEARS_STORAGE_KEY);
+    if (!savedValue) {
+      return Object.fromEntries(
+        fallbackYears.map((year, index) => [year, index === 0]),
+      );
+    }
+
+    const parsed = JSON.parse(savedValue);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+      return Object.fromEntries(
+        fallbackYears.map((year, index) => [year, index === 0]),
+      );
+    }
+
+    return Object.fromEntries(
+      fallbackYears.map((year, index) => [year, Boolean(parsed[year]) || (!Object.prototype.hasOwnProperty.call(parsed, year) && index === 0)]),
+    );
+  } catch {
+    return Object.fromEntries(
+      fallbackYears.map((year, index) => [year, index === 0]),
+    );
+  }
 }
 
 function getAuthUserDisplayName(user) {
@@ -1355,6 +1411,14 @@ function getCategoryOption(category, categories) {
   return matchedCategory ? formatCategoryOption(matchedCategory) : "";
 }
 
+function getCategoryMeta(categoryLabel, categories) {
+  const matchedCategory = categories.find((item) => item.label === categoryLabel);
+  return {
+    icon: matchedCategory?.icon ?? "•",
+    label: matchedCategory?.label ?? categoryLabel,
+  };
+}
+
 function getCategoryDisplay(categoryLabel, categories) {
   const matchedCategory = categories.find((item) => item.label === categoryLabel);
   return matchedCategory ? formatCategoryOption(matchedCategory) : categoryLabel;
@@ -1541,13 +1605,13 @@ function buildMonthContext(year, monthName) {
 
 function readNavigationStateFromLocation() {
   if (typeof window === "undefined") {
-    return { screen: "month", periodContext: null };
+    return { screen: "months", periodContext: null };
   }
 
   const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
   const params = new URLSearchParams(hash);
   const requestedScreen = params.get("screen");
-  const screen = supportedScreenNames.has(requestedScreen) ? requestedScreen : "month";
+  const screen = supportedScreenNames.has(requestedScreen) ? requestedScreen : "months";
 
   if (screen === "periodMonth") {
     const year = Number(params.get("year"));
@@ -1943,7 +2007,8 @@ function getCompactDueLabel(label) {
 
 function BudgetDataRow({
   title,
-  category,
+  categoryIcon = "•",
+  categoryLabel = "",
   note = null,
   amount,
   dueLabel = "",
@@ -1968,10 +2033,14 @@ function BudgetDataRow({
         onClick={onOpen}
       >
         <span className="budget-data-main">
-          <span className={titleClassName ? `budget-data-title ${titleClassName}` : "budget-data-title"}>{title}</span>
-          {compactDueLabel ? <span className="budget-data-mobile-due">{compactDueLabel}</span> : null}
+          <span className="budget-data-category-icon" aria-hidden="true" title={categoryLabel}>
+            {categoryIcon}
+          </span>
+          <span className="budget-data-copy">
+            <span className={titleClassName ? `budget-data-title ${titleClassName}` : "budget-data-title"}>{title}</span>
+            {compactDueLabel ? <span className="budget-data-mobile-due">{compactDueLabel}</span> : null}
+          </span>
         </span>
-        <span className="budget-data-category">{category}</span>
         {dueLabel ? (
           <span className={isPastDue ? "budget-data-due overdue" : "budget-data-due"}>
             {dueLabel}
@@ -1993,7 +2062,7 @@ function BudgetDataRow({
 }
 
 function ExpenseRow({ expense, categories, onToggle, onOpen, onEdit }) {
-  const categoryLabel = getCategoryDisplay(expense.category, categories);
+  const categoryMeta = getCategoryMeta(expense.category, categories);
   const isAutoPayment = expense.cadence === "auto";
   const isCompleted = expense.completed;
   const isPastDue = isExpensePastDue(expense);
@@ -2003,7 +2072,8 @@ function ExpenseRow({ expense, categories, onToggle, onOpen, onEdit }) {
   return (
     <BudgetDataRow
       title={expense.title}
-      category={categoryLabel}
+      categoryIcon={categoryMeta.icon}
+      categoryLabel={categoryMeta.label}
       amount={expense.amount}
       dueLabel={paymentDateLabel}
       secondaryLabel={transactionTypeLabel}
@@ -2651,16 +2721,16 @@ function SessionCard({ user, onSignOut, isPending }) {
 }
 
 function getScreenNavigationLabel(screen, selectedPeriodContext) {
+  if (screen === "months") {
+    return "Бюджет";
+  }
+
   if (screen === "nextMonth") {
     return "Бюджет грядущего месяца";
   }
 
   if (screen === "regular") {
     return "Регулярные траты";
-  }
-
-  if (screen === "months") {
-    return "Периоды";
   }
 
   if (screen === "periodMonth" && selectedPeriodContext) {
@@ -2685,11 +2755,7 @@ function NavigationMenu({ currentScreen, onNavigate, selectedPeriodContext }) {
         <button
           key={item}
           className={
-            (currentScreen === "month" && index === 0) ||
-            (currentScreen === "nextMonth" && index === 1) ||
-            (currentScreen === "regular" && item === "Регулярные траты") ||
-            (currentScreen === "months" && item === "Периоды") ||
-            (currentScreen === "periodMonth" && item === "Периоды") ||
+            ((currentScreen === "months" || currentScreen === "periodMonth" || currentScreen === "month" || currentScreen === "nextMonth" || currentScreen === "regular") && index === 0) ||
             ((currentScreen === "settings" || currentScreen === "categories") && item === "Настройка")
               ? "nav-item active"
               : "nav-item"
@@ -2930,46 +2996,33 @@ function CategoryConfirmModal({ title, description, onClose, onConfirm }) {
 
 function MonthRow({ month, onOpenCurrentMonth, onOpenMonth }) {
   const meta = getMonthMetaByName(month.name);
+  const handleOpen = () => {
+    if (month.isCurrent) {
+      onOpenCurrentMonth();
+      return;
+    }
+
+    onOpenMonth(month);
+  };
 
   return (
-    <div className={month.isCurrent ? "month-row current" : "month-row"}>
+    <button className={month.isCurrent ? "month-row current" : "month-row"} type="button" onClick={handleOpen}>
       <div className="month-row-main">
         <div className="month-row-icon" style={{ background: meta.bg, color: meta.tone }}>
           {meta.icon}
         </div>
         <div className="month-row-copy">
           <div className="month-row-name">{month.name}</div>
-          <div className="month-row-meta">
-            {month.hasData ? (
-              <>
-                <span>Бюджет: {formatCurrency(month.budget)} Kč</span>
-                <span>Оплачено: {formatCurrency(month.paid)} Kč</span>
-              </>
-            ) : (
-              <span>Бюджет: не заполнено</span>
-            )}
-          </div>
         </div>
       </div>
 
       <div className="month-row-actions">
-        {month.isCurrent ? <span className="month-current-badge">Дашборд текущего месяца</span> : null}
-        <button
-          className="secondary-action-button"
-          type="button"
-          onClick={() => {
-            if (month.isCurrent) {
-              onOpenCurrentMonth();
-              return;
-            }
-
-            onOpenMonth(month);
-          }}
-        >
-          {month.isCurrent ? "Открыть" : "Открыть"}
-        </button>
+        <span className="month-budget-label">Бюджет</span>
+        <strong className="month-budget-value">
+          {formatCurrency(month.budget)} Kč
+        </strong>
       </div>
-    </div>
+    </button>
   );
 }
 
@@ -2981,7 +3034,6 @@ function YearCard({ yearData, expanded, onToggle, onDelete, onOpenCurrentMonth, 
           <h2>{yearData.year}</h2>
           <div className="year-card-stats">
             <span>Бюджет: {formatCurrency(yearData.budget)} Kč</span>
-            <span>Оплачено: {formatCurrency(yearData.paid)} Kč</span>
           </div>
         </div>
         <div className="year-card-actions">
@@ -3014,30 +3066,57 @@ function YearCard({ yearData, expanded, onToggle, onDelete, onOpenCurrentMonth, 
   );
 }
 
-function MonthsScreen({ yearCards, expandedYears, onToggleYear, onDeleteYear, onAddYear, onOpenCurrentMonth, onOpenMonth }) {
+function MonthsScreen({
+  yearCards,
+  expandedYears,
+  onToggleYear,
+  onDeleteYear,
+  onAddYear,
+  onCreateExpense,
+  onOpenCurrentMonth,
+  onOpenNextMonth,
+  onOpenRegular,
+  onOpenMonth,
+}) {
   return (
     <>
       <header className="page-header">
-        <p className="eyebrow">История бюджета</p>
-        <h1>Периоды</h1>
+        <p className="eyebrow">Вход в бюджет</p>
+        <h1>Бюджет</h1>
         <p className="page-note">
-          Просматривай месяцы по годам, возвращайся к уже заполненным периодам и держи историю бюджета
-          в одном месте.
+          Отсюда можно быстро перейти в текущий месяц, в грядущий месяц и в любой другой период для
+          просмотра и планирования бюджета.
         </p>
       </header>
 
       <section className="card months-summary-card">
         <div className="months-summary-copy">
-          <h2>Сводная по месяцам</h2>
+          <h2>Быстрый вход</h2>
           <p>
-            Здесь собираются месяцы, которые уже прошли, а также те, в которых появились траты или
-            планирование бюджета.
+            Выбирай рабочий сценарий сверху, а ниже открывай нужные месяцы по годам.
           </p>
         </div>
-        <button className="primary-action-button" type="button" onClick={onAddYear}>
+        <div className="budget-entry-actions">
+          <button className="primary-action-button" type="button" onClick={onCreateExpense}>
+            Добавить трату
+          </button>
+          <button className="primary-action-button" type="button" onClick={onOpenCurrentMonth}>
+            Бюджет текущего месяца
+          </button>
+          <button className="secondary-action-button" type="button" onClick={onOpenNextMonth}>
+            Бюджет грядущего месяца
+          </button>
+          <button className="secondary-action-button" type="button" onClick={onOpenRegular}>
+            Регулярные траты
+          </button>
+        </div>
+      </section>
+
+      <div className="months-utility-bar">
+        <button className="secondary-action-button" type="button" onClick={onAddYear}>
           Добавить новый учетный год
         </button>
-      </section>
+      </div>
 
       <div className="years-stack">
         {yearCards.map((yearData) => (
@@ -3067,11 +3146,13 @@ function formatRegularSchedule(template) {
 function RegularExpenseTemplateCard({ template, categories, currentMonthContext, onOpen }) {
   const currentAmount = getRegularAmountForPeriod(template, currentMonthContext.year, currentMonthContext.monthName);
   const upcomingChange = getUpcomingRegularChange(template, currentMonthContext);
+  const categoryMeta = getCategoryMeta(template.category, categories);
 
   return (
     <BudgetDataRow
       title={template.title}
-      category={getCategoryDisplay(template.category, categories)}
+      categoryIcon={categoryMeta.icon}
+      categoryLabel={categoryMeta.label}
       note={
         upcomingChange
           ? `С ${formatMonthYearGenitive(upcomingChange.effectiveMonth, upcomingChange.effectiveYear)}: ${formatCurrency(upcomingChange.amount)} Kč вместо ${formatCurrency(upcomingChange.previousAmount)} Kč`
@@ -3221,12 +3302,14 @@ function ProjectedExpenseRow({ expense, categories, onOpenTemplate, onOpenExpens
   const isAutoPayment = expense.cadence === "auto";
   const isTemplateExpense = Boolean(expense.templateId);
   const transactionTypeLabel = isAutoPayment ? "Автоплатеж" : "Ручной платеж";
+  const categoryMeta = getCategoryMeta(expense.category, categories);
 
   return (
     <BudgetDataRow
       title={expense.title}
       titleClassName="projected-expense-title"
-      category={getCategoryDisplay(expense.category, categories)}
+      categoryIcon={categoryMeta.icon}
+      categoryLabel={categoryMeta.label}
       note={expense.effectiveNote ?? null}
       amount={expense.amount}
       dueLabel={getExpensePaymentDateLabel(expense)}
@@ -3280,6 +3363,7 @@ function ProjectedMemberCard({ member, categories, onOpenTemplate, onOpenExpense
 function NextMonthBudgetScreen({
   title = "Бюджет грядущего месяца",
   note = "Этот экран собирается из регулярных шаблонов. Изменения суммы применяются здесь уже с нового периода, а текущий месяц остается без переписывания.",
+  breadcrumbs = null,
   monthLabel,
   monthMeta,
   totals,
@@ -3294,6 +3378,7 @@ function NextMonthBudgetScreen({
   return (
     <>
       <header className="page-header">
+        {breadcrumbs?.length ? <Breadcrumbs items={breadcrumbs} /> : null}
         <p className="eyebrow">Проекция бюджета</p>
         <h1>{title}</h1>
         <p className="page-note">{note}</p>
@@ -3477,6 +3562,8 @@ export default function App() {
   const nextMonthLabel = `${nextMonthContext.monthName} ${nextMonthContext.year}`;
   const initialNavigationState = readNavigationStateFromLocation();
   const contentRef = useRef(null);
+  const hasInitializedHistoryRef = useRef(false);
+  const skipHistorySyncRef = useRef(false);
   const [members, setMembers] = useState(getInitialMembers);
   const [categories, setCategories] = useState(getInitialCategories);
   const [regularExpenses, setRegularExpenses] = useState(() => getInitialRegularExpenses(getInitialMembers()));
@@ -3491,8 +3578,8 @@ export default function App() {
   const [authErrorMessage, setAuthErrorMessage] = useState("");
   const [dbInitError, setDbInitError] = useState("");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [trackedYears, setTrackedYears] = useState(() => getDefaultTrackedYears());
-  const [expandedYears, setExpandedYears] = useState(() => getDefaultExpandedYears());
+  const [trackedYears, setTrackedYears] = useState(getInitialTrackedYears);
+  const [expandedYears, setExpandedYears] = useState(() => getInitialExpandedYears(getInitialTrackedYears()));
   const [categoryEditorState, setCategoryEditorState] = useState(null);
   const [categoryConfirmState, setCategoryConfirmState] = useState(null);
   const [yearConfirmState, setYearConfirmState] = useState(null);
@@ -3524,18 +3611,7 @@ export default function App() {
     setMobileNavOpen(false);
 
     if (index === 0) {
-      setCurrentScreen("month");
-      return;
-    }
-    if (index === 1) {
-      setCurrentScreen("nextMonth");
-      return;
-    }
-    if (item === "Регулярные траты") {
-      setCurrentScreen("regular");
-      return;
-    }
-    if (item === "Периоды") {
+      setSelectedPeriodContext(null);
       setCurrentScreen("months");
       return;
     }
@@ -3680,6 +3756,33 @@ export default function App() {
   }, [regularExpenses]);
 
   useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(TRACKED_YEARS_STORAGE_KEY, JSON.stringify(trackedYears));
+    } catch {
+      // ignore storage write errors
+    }
+  }, [trackedYears]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    try {
+      const normalized = Object.fromEntries(
+        trackedYears.map((year, index) => [year, Boolean(expandedYears[year]) || (!Object.prototype.hasOwnProperty.call(expandedYears, year) && index === 0)]),
+      );
+      window.localStorage.setItem(EXPANDED_YEARS_STORAGE_KEY, JSON.stringify(normalized));
+    } catch {
+      // ignore storage write errors
+    }
+  }, [expandedYears, trackedYears]);
+
+  useEffect(() => {
     const previousOverflow = document.body.style.overflow;
     const previousTouchAction = document.body.style.touchAction;
 
@@ -3721,14 +3824,44 @@ export default function App() {
     const currentHash = window.location.hash.startsWith("#")
       ? window.location.hash.slice(1)
       : "";
+    const nextUrl = `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ""}`;
+
+    if (!hasInitializedHistoryRef.current) {
+      hasInitializedHistoryRef.current = true;
+
+      if (nextHash !== currentHash) {
+        window.history.replaceState(null, "", nextUrl);
+      }
+      return;
+    }
+
+    if (skipHistorySyncRef.current) {
+      skipHistorySyncRef.current = false;
+      return;
+    }
 
     if (nextHash === currentHash) {
       return;
     }
 
-    const nextUrl = `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ""}`;
-    window.history.replaceState(null, "", nextUrl);
+    window.history.pushState(null, "", nextUrl);
   }, [currentScreen, selectedPeriodContext]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+
+    const handlePopState = () => {
+      const navigationState = readNavigationStateFromLocation();
+      skipHistorySyncRef.current = true;
+      setSelectedPeriodContext(navigationState.periodContext);
+      setCurrentScreen(navigationState.screen);
+    };
+
+    window.addEventListener("popstate", handlePopState);
+    return () => window.removeEventListener("popstate", handlePopState);
+  }, []);
 
   useEffect(() => {
     if (!isSupabaseConfigured) {
@@ -4243,7 +4376,8 @@ export default function App() {
     });
 
     return trackedYears.map((year) => {
-      const months = fullMonthNames
+      const months = [...fullMonthNames]
+        .reverse()
         .map((monthName) => {
           const month = aggregates.get(year)?.[monthName];
           return month ? { ...month, year } : null;
@@ -4314,6 +4448,23 @@ export default function App() {
         year: targetMonthContext.year,
         owner: projectedMember.name,
         payer: projectedMember.name,
+      }),
+    );
+    setModalMode("edit");
+  };
+
+  const handleCreateExpenseFromBudgetHub = () => {
+    const commonMember = members.find((item) => item.id === "common") ?? members[0];
+    if (!commonMember) {
+      return;
+    }
+
+    setSelectedExpense(
+      createEmptyExpenseDraft(commonMember, {
+        month: monthOptions[currentMonthContext.monthIndex],
+        year: currentMonthContext.year,
+        owner: "",
+        payer: "",
       }),
     );
     setModalMode("edit");
@@ -4711,7 +4862,7 @@ export default function App() {
     setTrackedYears(getDefaultTrackedYears(nextCurrentYear));
     setExpandedYears(getDefaultExpandedYears(nextCurrentYear));
     setSelectedPeriodContext(null);
-    setCurrentScreen("month");
+    setCurrentScreen("months");
   };
 
   const handleSaveRegularExpense = async (previousTemplate, updates) => {
@@ -4966,6 +5117,11 @@ export default function App() {
             <span className="brand-accent" />
             Family Budget
           </div>
+          <NavigationMenu
+            currentScreen={currentScreen}
+            onNavigate={handleNavigate}
+            selectedPeriodContext={selectedPeriodContext}
+          />
           {authSession ? (
             <SessionCard
               user={authUser}
@@ -4973,11 +5129,6 @@ export default function App() {
               isPending={authPending}
             />
           ) : null}
-          <NavigationMenu
-            currentScreen={currentScreen}
-            onNavigate={handleNavigate}
-            selectedPeriodContext={selectedPeriodContext}
-          />
         </aside>
 
         <section ref={contentRef} className="content">
@@ -5065,6 +5216,19 @@ export default function App() {
                   ? "Этот экран показывает, как выбранный месяц собирается из регулярных шаблонов. Здесь можно заранее увидеть будущую нагрузку по бюджету."
                   : "Этот экран показывает фактическое наполнение выбранного месяца и позволяет вернуться к уже созданным тратам."
               }
+              breadcrumbs={[
+                {
+                  label: "Бюджет",
+                  onClick: () => {
+                    setSelectedPeriodContext(null);
+                    setCurrentScreen("months");
+                  },
+                },
+                {
+                  label: formatMonthYearLabel(selectedPeriodContext.monthName, selectedPeriodContext.year),
+                  current: true,
+                },
+              ]}
               monthLabel={formatMonthYearLabel(selectedPeriodContext.monthName, selectedPeriodContext.year)}
               monthMeta={getMonthMetaByName(selectedPeriodContext.monthName)}
               totals={selectedPeriodTotals}
@@ -5099,7 +5263,13 @@ export default function App() {
               onToggleYear={handleToggleYear}
               onDeleteYear={handleDeleteYear}
               onAddYear={handleAddYear}
+              onCreateExpense={handleCreateExpenseFromBudgetHub}
               onOpenCurrentMonth={() => setCurrentScreen("month")}
+              onOpenNextMonth={() => {
+                setSelectedPeriodContext(null);
+                setCurrentScreen("nextMonth");
+              }}
+              onOpenRegular={() => setCurrentScreen("regular")}
               onOpenMonth={handleOpenPeriodMonth}
             />
           ) : null}
@@ -5141,6 +5311,11 @@ export default function App() {
               ×
             </button>
           </div>
+          <NavigationMenu
+            currentScreen={currentScreen}
+            onNavigate={handleNavigate}
+            selectedPeriodContext={selectedPeriodContext}
+          />
           {authSession ? (
             <SessionCard
               user={authUser}
@@ -5148,11 +5323,6 @@ export default function App() {
               isPending={authPending}
             />
           ) : null}
-          <NavigationMenu
-            currentScreen={currentScreen}
-            onNavigate={handleNavigate}
-            selectedPeriodContext={selectedPeriodContext}
-          />
         </div>
       </div>
 
