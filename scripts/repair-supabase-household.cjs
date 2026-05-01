@@ -12,15 +12,15 @@ const client = new Client({
 async function main() {
   await client.connect();
 
-  const {
-    rows: [user],
-  } = await client.query(
-    "select id, email from auth.users order by created_at desc limit 1",
+  const { rows: users } = await client.query(
+    "select id, email from auth.users order by created_at asc",
   );
 
-  if (!user) {
+  if (!users.length) {
     throw new Error("No auth users found in Supabase.");
   }
+
+  const user = users[0];
 
   const { rows: stats } = await client.query(`
     with counts as (
@@ -71,6 +71,20 @@ async function main() {
     [primaryHousehold.id, user.id],
   );
 
+  const memberUsers = users.filter((candidate) => candidate.id !== user.id);
+
+  for (const memberUser of memberUsers) {
+    await client.query(
+      `
+        insert into public.household_memberships (household_id, user_id, role)
+        values ($1, $2, 'member')
+        on conflict (household_id, user_id)
+        do update set role = excluded.role
+      `,
+      [primaryHousehold.id, memberUser.id],
+    );
+  }
+
   const removableHouseholds = stats
     .filter((household) => household.id !== primaryHousehold.id && household.total_rows === 0)
     .map((household) => household.id);
@@ -91,8 +105,10 @@ async function main() {
   console.log(
     JSON.stringify(
       {
-        user,
+        users,
+        owner: user,
         claimedHousehold: primaryHousehold,
+        addedMembers: memberUsers,
         removedEmptyHouseholds: removableHouseholds,
       },
       null,
