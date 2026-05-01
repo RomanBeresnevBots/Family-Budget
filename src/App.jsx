@@ -1344,7 +1344,9 @@ async function persistBudgetSnapshotToSupabase({ householdId, members, categorie
 
         return {
           household_id: householdId,
-          series_id: seriesIdBySourceExpenseId.get(expense.id) ?? null,
+          series_id:
+            seriesIdBySourceExpenseId.get(expense.sourceExpenseId ?? expense.templateId ?? expense.id) ??
+            null,
           occurrence_month: buildSqlDate(occurrenceYear, occurrenceMonth),
           due_on: buildSqlDate(occurrenceYear, occurrenceMonth, dayOfMonth),
           title: expense.title,
@@ -1355,7 +1357,10 @@ async function persistBudgetSnapshotToSupabase({ householdId, members, categorie
           owner_person_id: ownerPersonId ?? null,
           payer_person_id: payerPersonId,
           category_id: categoryId,
-          source_type: seriesIdBySourceExpenseId.get(expense.id) ? "series" : "manual",
+          source_type:
+            seriesIdBySourceExpenseId.get(expense.sourceExpenseId ?? expense.templateId ?? expense.id)
+              ? "series"
+              : "manual",
           status: expense.completed ? "completed" : "planned",
           completed_at: expense.completed ? new Date().toISOString() : null,
           note: null,
@@ -1466,6 +1471,9 @@ async function loadBudgetSnapshotFromSupabase(householdId) {
   ];
 
   const memberByName = new Map(memberBase.map((member) => [member.name, member]));
+  const sourceExpenseIdBySeriesId = new Map(
+    (series ?? []).map((entry) => [entry.id, entry.source_expense_client_id ?? entry.id]),
+  );
 
   (occurrences ?? []).forEach((occurrence) => {
     const dueOn = new Date(occurrence.due_on);
@@ -1483,6 +1491,8 @@ async function loadBudgetSnapshotFromSupabase(householdId) {
 
     member.expenses.push({
       id: occurrence.id,
+      templateId: occurrence.series_id ? sourceExpenseIdBySeriesId.get(occurrence.series_id) ?? null : null,
+      sourceExpenseId: occurrence.series_id ? sourceExpenseIdBySeriesId.get(occurrence.series_id) ?? null : null,
       title: occurrence.title,
       category: category.label,
       amount: Number(occurrence.amount),
@@ -2139,14 +2149,58 @@ function getTemplateRegularIdentityKey(template) {
   });
 }
 
+function buildProjectedTemplateMatchKey({
+  title,
+  category,
+  owner,
+  payer,
+  dayOfMonth,
+  month,
+  amount,
+}) {
+  return [
+    String(title ?? "").trim().toLowerCase(),
+    String(category ?? "").trim().toLowerCase(),
+    String(normalizeOwnerName(owner, payer) ?? "").trim().toLowerCase(),
+    String(normalizePayerName(payer) ?? "").trim().toLowerCase(),
+    String(dayOfMonth ?? ""),
+    normalizeMonthName(month),
+    String(Number(amount ?? 0)),
+  ].join("|");
+}
+
+function getExpenseProjectedTemplateMatchKey(expense) {
+  return buildProjectedTemplateMatchKey({
+    title: expense.title,
+    category: expense.category,
+    owner: expense.owner,
+    payer: getExpensePayer(expense),
+    dayOfMonth: getExpenseDayOfMonth(expense),
+    month: expense.month,
+    amount: expense.amount,
+  });
+}
+
+function getTemplateProjectedMatchKey(template, monthContext) {
+  return buildProjectedTemplateMatchKey({
+    title: template.title,
+    category: template.category,
+    owner: template.owner,
+    payer: template.payer,
+    dayOfMonth: template.dayOfMonth,
+    month: monthContext.monthShort,
+    amount: getRegularAmountForPeriod(template, monthContext.year, monthContext.monthName),
+  });
+}
+
 function getProjectedRegularExpensesForMonth({ regularExpenses, monthContext, actualExpenses = [] }) {
   const explicitRegularSourceIds = new Set(
     actualExpenses
       .filter((expense) => {
         const frequency = expense.frequency ?? detectFrequency(expense);
-        return frequency === "Каждый месяц" || frequency === "Раз в год";
+        return frequency === "Каждый месяц" || frequency === "Раз в год" || Boolean(expense.templateId) || Boolean(expense.sourceExpenseId);
       })
-      .map((expense) => expense.id),
+      .flatMap((expense) => [expense.id, expense.sourceExpenseId].filter(Boolean)),
   );
   const explicitRegularTemplateIds = new Set(
     actualExpenses
@@ -2158,48 +2212,67 @@ function getProjectedRegularExpensesForMonth({ regularExpenses, monthContext, ac
       .map((expense) => getExpenseRegularIdentityKey(expense))
       .filter(Boolean),
   );
+  const explicitProjectedMatchKeys = new Set(
+    actualExpenses
+      .map((expense) => getExpenseProjectedTemplateMatchKey(expense))
+      .filter(Boolean),
+  );
 
   return regularExpenses
     .filter((template) => doesRegularTemplateApplyToMonth(template, monthContext))
     .filter((template) => !explicitRegularSourceIds.has(template.sourceExpenseId))
     .filter((template) => !explicitRegularTemplateIds.has(template.id))
     .filter((template) => !explicitRegularIdentityKeys.has(getTemplateRegularIdentityKey(template)))
+    .filter((template) => !explicitProjectedMatchKeys.has(getTemplateProjectedMatchKey(template, monthContext)))
     .map((template) => buildProjectedExpenseFromTemplate(template, monthContext));
 }
 
 function buildCombinedMonthExpenses({ members, regularExpenses, monthContext }) {
+  const applicableTemplates = regularExpenses.filter((template) => doesRegularTemplateApplyToMonth(template, monthContext));
+  const templateById = new Map(applicableTemplates.map((template) => [template.id, template]));
   const templateBySourceExpenseId = new Map(
-    regularExpenses
+    applicableTemplates
       .filter((template) => template.sourceExpenseId)
       .map((template) => [template.sourceExpenseId, template]),
+  );
+  const templateByProjectedMatchKey = new Map(
+    applicableTemplates.map((template) => [getTemplateProjectedMatchKey(template, monthContext), template]),
   );
   const actualExpenses = getMemberExpensesForMonth(members, monthContext).map((expense) => {
     const frequency = expense.frequency ?? detectFrequency(expense);
     const linkedTemplate =
-      (frequency === "Каждый месяц" || frequency === "Раз в год")
+      templateById.get(expense.templateId) ??
+      templateBySourceExpenseId.get(expense.sourceExpenseId ?? expense.id) ??
+      templateByProjectedMatchKey.get(getExpenseProjectedTemplateMatchKey(expense)) ??
+      ((frequency === "Каждый месяц" || frequency === "Раз в год")
         ? templateBySourceExpenseId.get(expense.id)
-        : null;
+        : null);
 
     return linkedTemplate
-      ? {
-          ...expense,
-          title: linkedTemplate.title,
-          cadence: linkedTemplate.cadence,
-          category: linkedTemplate.category,
-          owner: linkedTemplate.owner,
-          payer: linkedTemplate.payer,
-          frequency: linkedTemplate.frequency,
-          dayOfMonth: linkedTemplate.dayOfMonth,
-          month: linkedTemplate.month,
-          dueLabel: buildDueLabel({
+      ? expense.isMonthOverride
+        ? {
+            ...expense,
+            templateId: linkedTemplate.id,
+          }
+        : {
+            ...expense,
+            title: linkedTemplate.title,
+            cadence: linkedTemplate.cadence,
+            category: linkedTemplate.category,
+            owner: linkedTemplate.owner,
+            payer: linkedTemplate.payer,
             frequency: linkedTemplate.frequency,
             dayOfMonth: linkedTemplate.dayOfMonth,
-            month: monthOptions[monthContext.monthIndex],
-            urgent: expense.urgent,
-            completed: expense.completed,
-          }),
-          templateId: linkedTemplate.id,
-        }
+            month: linkedTemplate.month,
+            dueLabel: buildDueLabel({
+              frequency: linkedTemplate.frequency,
+              dayOfMonth: linkedTemplate.dayOfMonth,
+              month: monthOptions[monthContext.monthIndex],
+              urgent: expense.urgent,
+              completed: expense.completed,
+            }),
+            templateId: linkedTemplate.id,
+          }
       : expense;
   });
   const projectedRegularExpenses = getProjectedRegularExpensesForMonth({
@@ -3718,6 +3791,30 @@ function RegularExpenseDetailsModal({ template, categories, onClose, onEdit, onD
           </div>
         </div>
       ) : null}
+    </ModalShell>
+  );
+}
+
+function RecurringEditChoiceModal({ title, onClose, onEditSingleMonth, onEditTemplate }) {
+  return (
+    <ModalShell title="Как изменить регулярную трату" onClose={onClose} compact>
+      <div className="modal-header">
+        <div>
+          <h2>{title}</h2>
+          <p className="regular-editor-note">
+            Выбери, нужно изменить только этот месяц или весь шаблон для следующих месяцев.
+          </p>
+        </div>
+      </div>
+
+      <div className="details-actions stacked">
+        <button className="primary-action-button" type="button" onClick={onEditSingleMonth}>
+          Изменить только этот месяц
+        </button>
+        <button className="secondary-action-button" type="button" onClick={onEditTemplate}>
+          Изменить все следующие месяцы
+        </button>
+      </div>
     </ModalShell>
   );
 }
@@ -6437,6 +6534,7 @@ export default function App() {
   const [selectedExpense, setSelectedExpense] = useState(null);
   const [selectedRegularTemplate, setSelectedRegularTemplate] = useState(null);
   const [modalMode, setModalMode] = useState("details");
+  const [recurringEditChoice, setRecurringEditChoice] = useState(null);
   const [currentScreen, setCurrentScreen] = useState(initialNavigationState.screen);
   const [authSession, setAuthSession] = useState(null);
   const [authUser, setAuthUser] = useState(null);
@@ -6701,6 +6799,7 @@ export default function App() {
       yearConfirmState ||
       yearAddModalOpen ||
       regularEditorState ||
+      recurringEditChoice ||
       regularConfirmState ||
       resetConfirmState ||
       incomeEditorState ||
@@ -6717,7 +6816,7 @@ export default function App() {
       document.body.style.overflow = previousOverflow;
       document.body.style.touchAction = previousTouchAction;
     };
-  }, [selectedExpense, selectedRegularTemplate, categoryEditorState, categoryConfirmState, yearConfirmState, yearAddModalOpen, regularEditorState, regularConfirmState, resetConfirmState, incomeEditorState, incomeMonthEditorState, selectedCashflowSnapshot, snapshotEditorState, cashflowReserveEditorOpen]);
+  }, [selectedExpense, selectedRegularTemplate, categoryEditorState, categoryConfirmState, yearConfirmState, yearAddModalOpen, regularEditorState, recurringEditChoice, regularConfirmState, resetConfirmState, incomeEditorState, incomeMonthEditorState, selectedCashflowSnapshot, snapshotEditorState, cashflowReserveEditorOpen]);
 
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: "auto" });
@@ -7584,6 +7683,8 @@ export default function App() {
 
       const materializedExpense = {
         id: matchedTemplate.sourceExpenseId || toggledExpenseId || `series-expense-${Date.now()}`,
+        templateId: matchedTemplate.id,
+        sourceExpenseId: matchedTemplate.sourceExpenseId || toggledExpenseId || null,
         title: matchedTemplate.title,
         amount: Number(getRegularAmountForPeriod(matchedTemplate, currentMonthContext.year, currentMonthContext.monthName) ?? toggledExpense.amount ?? 0),
         cadence: matchedTemplate.cadence,
@@ -8198,15 +8299,106 @@ export default function App() {
     setModalMode("details");
   };
 
+  const doesMemberHaveExpenseForPeriod = (memberId, expenseId, monthName, year) => {
+    const sourceMember = latestSnapshotRef.current.members.find((item) => item.id === memberId);
+    if (!sourceMember) {
+      return false;
+    }
+
+    return sourceMember.expenses.some(
+      (item) =>
+        item.id === expenseId &&
+        normalizeMonthName(item.month) === normalizeMonthName(monthName) &&
+        Number(item.year) === Number(year),
+    );
+  };
+
+  const handleRequestEditExpense = (item) => {
+    const { member, expense } = item;
+    if (!expense?.templateId) {
+      setSelectedExpense(item);
+      setModalMode("edit");
+      return;
+    }
+
+    setRecurringEditChoice({ member, expense });
+    setSelectedExpense(null);
+  };
+
+  const handleEditRecurringSingleMonth = () => {
+    if (!recurringEditChoice) {
+      return;
+    }
+
+    const { member, expense } = recurringEditChoice;
+    const hasActualOccurrence = doesMemberHaveExpenseForPeriod(
+      expense.sourceMember?.id ?? member.id,
+      expense.id,
+      expense.month,
+      expense.year,
+    );
+
+    const monthSpecificItem = hasActualOccurrence
+      ? { member, expense: { ...expense, editScope: "single" } }
+      : createEmptyExpenseDraft(member, {
+          title: expense.title,
+          category: expense.category,
+          amount: expense.amount,
+          cadence: expense.cadence,
+          frequency: expense.frequency,
+          dayOfMonth: expense.dayOfMonth,
+          month: expense.month,
+          year: expense.year,
+          owner: expense.owner,
+          payer: expense.payer,
+          templateId: expense.templateId,
+          sourceExpenseId: expense.id,
+        });
+
+    if (monthSpecificItem.expense.isDraft) {
+      monthSpecificItem.expense.templateId = expense.templateId;
+      monthSpecificItem.expense.sourceExpenseId = expense.id;
+      monthSpecificItem.expense.editScope = "single";
+    }
+
+    setRecurringEditChoice(null);
+    setSelectedExpense(monthSpecificItem);
+    setModalMode("edit");
+  };
+
+  const handleEditRecurringTemplate = () => {
+    if (!recurringEditChoice?.expense?.templateId) {
+      return;
+    }
+
+    const template = latestSnapshotRef.current.regularExpenses.find(
+      (item) => item.id === recurringEditChoice.expense.templateId,
+    );
+
+    setRecurringEditChoice(null);
+
+    if (!template) {
+      return;
+    }
+
+    setRegularEditorState({ template });
+    setSelectedExpense(null);
+    setModalMode("details");
+  };
+
   const handleSaveExpense = async ({ member, expense }, updates) => {
     const snapshot = latestSnapshotRef.current;
     const isDraft = Boolean(expense.isDraft);
+    const isSingleMonthOverride = expense.editScope === "single";
     const nextExpenseId = isDraft ? `${member.id}-${Date.now()}` : expense.id;
     const normalizedPayer = normalizePayerName(updates.payer);
     const normalizedOwner = normalizeOwnerName(updates.owner, normalizedPayer);
     const isRecurring = updates.frequency === "Каждый месяц" || updates.frequency === "Раз в год";
     const nextExpense = {
       id: nextExpenseId,
+      templateId: expense.templateId ?? null,
+      sourceExpenseId: expense.sourceExpenseId ?? null,
+      isMonthOverride,
       title: updates.title,
       amount: updates.amount,
       cadence: updates.cadence,
@@ -8262,6 +8454,10 @@ export default function App() {
     );
 
     const nextRegularExpenses = (() => {
+      if (isSingleMonthOverride) {
+        return snapshot.regularExpenses;
+      }
+
       const existingTemplateIndex = snapshot.regularExpenses.findIndex(
         (template) => template.sourceExpenseId === nextExpenseId,
       );
@@ -9064,7 +9260,7 @@ export default function App() {
             item={selectedExpense}
             categories={categories}
             onClose={() => setSelectedExpense(null)}
-            onEdit={() => setModalMode("edit")}
+            onEdit={() => handleRequestEditExpense(selectedExpense)}
             onDelete={handleDeleteExpense}
           />
         ) : (
@@ -9078,6 +9274,15 @@ export default function App() {
             }}
           />
         )
+      ) : null}
+
+      {recurringEditChoice ? (
+        <RecurringEditChoiceModal
+          title={recurringEditChoice.expense.title}
+          onClose={() => setRecurringEditChoice(null)}
+          onEditSingleMonth={handleEditRecurringSingleMonth}
+          onEditTemplate={handleEditRecurringTemplate}
+        />
       ) : null}
 
       {selectedRegularTemplate ? (

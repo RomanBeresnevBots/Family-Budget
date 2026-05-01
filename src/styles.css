@@ -2179,6 +2179,10 @@ textarea {
   margin-top: 6px;
 }
 
+.details-actions.stacked {
+  grid-template-columns: 1fr;
+}
+
 .primary-action-button {
   border: 0;
   border-radius: 14px;
