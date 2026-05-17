@@ -59,23 +59,31 @@ function readHashSearchParams() {
   return new URLSearchParams(hash)
 }
 
-function canUseLocalPreview() {
-  if (typeof window === "undefined" || !import.meta.env.DEV) {
+function canUsePreviewMode() {
+  if (typeof window === "undefined") {
     return false
   }
 
-  return localPreviewHosts.has(window.location.hostname)
+  if (import.meta.env.DEV) {
+    return localPreviewHosts.has(window.location.hostname)
+  }
+
+  return true
 }
 
-function isLocalPreviewModeEnabled() {
+function isPreviewModeEnabled() {
+  if (!canUsePreviewMode()) {
+    return false
+  }
+
   return (
-    canUseLocalPreview() &&
-    (isLocalPreviewForced || readHashSearchParams().get("preview") === "1")
+    readHashSearchParams().get("preview") === "1" ||
+    (import.meta.env.DEV && isLocalPreviewForced)
   )
 }
 
 function shouldUseSupabaseStorage() {
-  return isSupabaseConfigured && !isLocalPreviewModeEnabled()
+  return isSupabaseConfigured && !isPreviewModeEnabled()
 }
 
 const monthBackgroundByName = {
@@ -5478,13 +5486,13 @@ function AuthScreen({
             type="button"
             onClick={onOpenPreview}
           >
-            Открыть локальный preview без входа
+            Открыть демо без входа
           </button>
         ) : null}
 
         <p className="auth-footnote">
-          Доступ будет открыт только после авторизации. Публичная ссылка без
-          входа бюджет не покажет.
+          Доступ к вашему бюджету откроется только после авторизации. Без входа
+          можно открыть только демо-режим с тестовыми данными.
         </p>
 
         {canUsePreview ? (
@@ -9117,9 +9125,9 @@ function RegularExpenseStopModal({
 }
 
 export default function App() {
-  const isLocalPreviewEnabled = isLocalPreviewModeEnabled()
-  const canOpenLocalPreview = canUseLocalPreview()
-  const shouldUseSupabase = isSupabaseConfigured && !isLocalPreviewEnabled
+  const isPreviewEnabled = isPreviewModeEnabled()
+  const canOpenPreview = canUsePreviewMode()
+  const shouldUseSupabase = isSupabaseConfigured && !isPreviewEnabled
   const currentMonthContext = getCurrentMonthContext()
   const currentMonthMeta = getMonthMetaByName(currentMonthContext.monthName)
   const currentMonthLabel = `${currentMonthContext.monthName} ${currentMonthContext.year}`
@@ -9267,19 +9275,19 @@ export default function App() {
   }, [currentScreen, members, regularExpenses])
 
   useEffect(() => {
-    if (typeof window === "undefined" || !canOpenLocalPreview) {
+    if (typeof window === "undefined" || !canOpenPreview) {
       return
     }
 
     const handleHashChange = () => {
-      if (isLocalPreviewModeEnabled() !== isLocalPreviewEnabled) {
+      if (isPreviewModeEnabled() !== isPreviewEnabled) {
         window.location.reload()
       }
     }
 
     window.addEventListener("hashchange", handleHashChange)
     return () => window.removeEventListener("hashchange", handleHashChange)
-  }, [canOpenLocalPreview, isLocalPreviewEnabled])
+  }, [canOpenPreview, isPreviewEnabled])
 
   const activeBackgroundMonthContext = getActiveBackgroundMonthContext(
     currentScreen,
@@ -10661,14 +10669,14 @@ export default function App() {
 
   if (shouldUseSupabase && !authUser) {
     return (
-      <AuthScreen
-        onSignIn={handleSignInWithGoogle}
-        isPending={authPending}
-        errorMessage={authErrorMessage}
-        canUsePreview={canOpenLocalPreview}
-        onOpenPreview={() => {
-          window.location.hash = "preview=1"
-          window.location.reload()
+        <AuthScreen
+          onSignIn={handleSignInWithGoogle}
+          isPending={authPending}
+          errorMessage={authErrorMessage}
+          canUsePreview={canOpenPreview}
+          onOpenPreview={() => {
+            window.location.hash = "preview=1"
+            window.location.reload()
         }}
       />
     )
@@ -11506,13 +11514,13 @@ export default function App() {
         }
         style={appShellStyle}
       >
-        {isLocalPreviewEnabled ? (
+        {isPreviewEnabled ? (
           <div
             className="preview-mode-indicator"
-            aria-label="Локальный preview активен: вход через Google и Supabase выключены только для этой dev-сессии."
-            title="Локальный preview активен: вход через Google и Supabase выключены только для этой dev-сессии."
+            aria-label="Демо-режим активен: вход через Google и Supabase отключены, приложение показывает только тестовые данные."
+            title="Демо-режим активен: вход через Google и Supabase отключены, приложение показывает только тестовые данные."
           >
-            DEV
+            DEMO
           </div>
         ) : null}
 
