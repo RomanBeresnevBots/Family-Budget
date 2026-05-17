@@ -1,17 +1,10 @@
-const { Client } = require("pg");
+const { createSupabaseClient, requireHouseholdId } = require("./lib/db.cjs")
 
-const client = new Client({
-  host: "aws-0-eu-west-1.pooler.supabase.com",
-  port: 5432,
-  user: "postgres.qlsouerrwwyqjmuicxxr",
-  password: "zingom-1zamfi-wefFoc",
-  database: "postgres",
-  ssl: { rejectUnauthorized: false },
-});
+const client = createSupabaseClient()
 
-const householdId = "59591296-6d8b-44e1-ab20-5242247bce9c";
-const occurrenceMonth = "2026-04-01";
-const effectiveFrom = "2026-04-01";
+const householdId = requireHouseholdId()
+const occurrenceMonth = "2026-04-01"
+const effectiveFrom = "2026-04-01"
 
 const expenses = [
   { title: "Котлеты котам", category: "Питомцы", amount: 1000, day: 1, owner: "Общее", payer: "Саша", cadence: "manual" },
@@ -40,7 +33,7 @@ const expenses = [
   { title: "ČSSZ", category: "OSVC", amount: 7839, day: 8, owner: "Рома", payer: "Рома", cadence: "manual" },
   { title: "iCloud 2TB", category: "Подписки", amount: 249, day: 11, owner: "Рома", payer: "Рома", cadence: "auto" },
   { title: "OpenAI GPT", category: "Подписки", amount: 499, day: 14, owner: "Рома", payer: "Рома", cadence: "auto" },
-];
+]
 
 function slugify(value) {
   return value
@@ -52,26 +45,26 @@ function slugify(value) {
 }
 
 async function main() {
-  await client.connect();
+  await client.connect()
 
   const { rows: people } = await client.query(
     "select id, name from public.people where household_id = $1",
-    [householdId],
-  );
+    [householdId]
+  )
   const { rows: categories } = await client.query(
     "select id, label from public.categories where household_id = $1",
-    [householdId],
-  );
+    [householdId]
+  )
 
-  const personIdByName = new Map(people.map((person) => [person.name, person.id]));
-  const categoryIdByLabel = new Map(categories.map((category) => [category.label, category.id]));
+  const personIdByName = new Map(people.map((person) => [person.name, person.id]))
+  const categoryIdByLabel = new Map(categories.map((category) => [category.label, category.id]))
 
-  await client.query("begin");
-  await client.query("delete from public.expense_occurrences where household_id = $1", [householdId]);
-  await client.query("delete from public.expense_series where household_id = $1", [householdId]);
+  await client.query("begin")
+  await client.query("delete from public.expense_occurrences where household_id = $1", [householdId])
+  await client.query("delete from public.expense_series where household_id = $1", [householdId])
 
-  for (const [index, expense] of expenses.entries()) {
-    const sourceExpenseId = `seed-${expense.owner}-${slugify(expense.title)}-${expense.day}`;
+  for (const expense of expenses) {
+    const sourceExpenseId = `seed-${expense.owner}-${slugify(expense.title)}-${expense.day}`
 
     const {
       rows: [series],
@@ -81,21 +74,21 @@ async function main() {
         values ($1, $2, true)
         returning id
       `,
-      [householdId, sourceExpenseId],
-    );
+      [householdId, sourceExpenseId]
+    )
 
     const ownerPersonId = expense.owner === "Общее" ? null : personIdByName.get(expense.owner);
     const payerPersonId = personIdByName.get(expense.payer);
     const categoryId = categoryIdByLabel.get(expense.category);
 
     if (!payerPersonId) {
-      throw new Error(`Missing payer person for ${expense.title}: ${expense.payer}`);
+      throw new Error(`Missing payer person for ${expense.title}: ${expense.payer}`)
     }
     if (!categoryId) {
-      throw new Error(`Missing category for ${expense.title}: ${expense.category}`);
+      throw new Error(`Missing category for ${expense.title}: ${expense.category}`)
     }
 
-    const dueOn = `2026-04-${String(expense.day).padStart(2, "0")}`;
+    const dueOn = `2026-04-${String(expense.day).padStart(2, "0")}`
 
     await client.query(
       `
@@ -119,8 +112,8 @@ async function main() {
         ownerPersonId,
         payerPersonId,
         categoryId,
-      ],
-    );
+      ]
+    )
 
     await client.query(
       `
@@ -145,24 +138,24 @@ async function main() {
         ownerPersonId,
         payerPersonId,
         categoryId,
-      ],
-    );
+      ]
+    )
   }
 
-  await client.query("commit");
-  console.log(JSON.stringify({ seeded: expenses.length }, null, 2));
+  await client.query("commit")
+  console.log(JSON.stringify({ seeded: expenses.length }, null, 2))
 }
 
 main()
   .catch(async (error) => {
     try {
-      await client.query("rollback");
+      await client.query("rollback")
     } catch {}
-    console.error(error);
-    process.exit(1);
+    console.error(error)
+    process.exit(1)
   })
   .finally(async () => {
     try {
-      await client.end();
+      await client.end()
     } catch {}
-  });
+  })

@@ -1,34 +1,27 @@
-const { Client } = require("pg");
+const { createSupabaseClient, requireHouseholdId } = require("./lib/db.cjs")
 
-const client = new Client({
-  host: "aws-0-eu-west-1.pooler.supabase.com",
-  port: 5432,
-  user: "postgres.qlsouerrwwyqjmuicxxr",
-  password: "zingom-1zamfi-wefFoc",
-  database: "postgres",
-  ssl: { rejectUnauthorized: false },
-});
+const client = createSupabaseClient()
 
-const householdId = "59591296-6d8b-44e1-ab20-5242247bce9c";
-const aprilMonth = "2026-04-01";
-const targetMonths = ["2026-01-01", "2026-02-01", "2026-03-01"];
-const emptyUuid = "00000000-0000-0000-0000-000000000000";
+const householdId = requireHouseholdId()
+const aprilMonth = "2026-04-01"
+const targetMonths = ["2026-01-01", "2026-02-01", "2026-03-01"]
+const emptyUuid = "00000000-0000-0000-0000-000000000000"
 
 function monthLabel(sqlDate) {
   return new Intl.DateTimeFormat("ru-RU", {
     month: "long",
     year: "numeric",
     timeZone: "UTC",
-  }).format(new Date(`${sqlDate}T00:00:00Z`));
+  }).format(new Date(`${sqlDate}T00:00:00Z`))
 }
 
 function buildDueDate(monthStart, dayOfMonth) {
-  const [year, month] = monthStart.split("-").map(Number);
-  return `${year}-${String(month).padStart(2, "0")}-${String(dayOfMonth).padStart(2, "0")}`;
+  const [year, month] = monthStart.split("-").map(Number)
+  return `${year}-${String(month).padStart(2, "0")}-${String(dayOfMonth).padStart(2, "0")}`
 }
 
 async function main() {
-  await client.connect();
+  await client.connect()
 
   const countsRes = await client.query(
     `
@@ -39,14 +32,14 @@ async function main() {
       group by occurrence_month
       order by occurrence_month
     `,
-    [householdId, targetMonths],
-  );
+    [householdId, targetMonths]
+  )
 
   if (countsRes.rows.some((row) => row.count > 0)) {
     const details = countsRes.rows
       .map((row) => `${row.occurrence_month.toISOString().slice(0, 10)} => ${row.count}`)
-      .join(", ");
-    throw new Error(`Q1 2026 already contains rows, aborting backfill: ${details}`);
+      .join(", ")
+    throw new Error(`Q1 2026 already contains rows, aborting backfill: ${details}`)
   }
 
   const aprilRegularRes = await client.query(
@@ -100,10 +93,10 @@ async function main() {
         and (o.series_id is not null or ms.series_id is not null)
       order by due_day, title
     `,
-    [householdId, aprilMonth, emptyUuid],
-  );
+    [householdId, aprilMonth, emptyUuid]
+  )
 
-  const byKey = new Map();
+  const byKey = new Map()
   for (const row of aprilRegularRes.rows) {
     const key =
       row.resolved_series_id ??
@@ -117,24 +110,24 @@ async function main() {
         row.payer_person_id,
         row.category_id,
         row.due_day,
-      ].join("|");
+      ].join("|")
 
     if (!byKey.has(key)) {
-      byKey.set(key, row);
+      byKey.set(key, row)
     }
   }
 
-  const sourceRows = Array.from(byKey.values());
+  const sourceRows = Array.from(byKey.values())
   if (!sourceRows.length) {
-    throw new Error("Could not resolve April regular expenses to backfill.");
+    throw new Error("Could not resolve April regular expenses to backfill.")
   }
 
-  await client.query("begin");
+  await client.query("begin")
 
-  let inserted = 0;
+  let inserted = 0
   for (const targetMonth of targetMonths) {
     for (const row of sourceRows) {
-      const dueOn = buildDueDate(targetMonth, row.due_day);
+      const dueOn = buildDueDate(targetMonth, row.due_day)
 
       const insertRes = await client.query(
         `
@@ -177,14 +170,14 @@ async function main() {
           row.payer_person_id,
           row.category_id,
           row.note,
-        ],
-      );
+        ]
+      )
 
-      inserted += insertRes.rowCount;
+      inserted += insertRes.rowCount
     }
   }
 
-  await client.query("commit");
+  await client.query("commit")
 
   console.log(
     JSON.stringify(
@@ -195,21 +188,21 @@ async function main() {
         inserted,
       },
       null,
-      2,
-    ),
-  );
+      2
+    )
+  )
 }
 
 main()
   .catch(async (error) => {
     try {
-      await client.query("rollback");
+      await client.query("rollback")
     } catch {}
-    console.error(error);
-    process.exit(1);
+    console.error(error)
+    process.exit(1)
   })
   .finally(async () => {
     try {
-      await client.end();
+      await client.end()
     } catch {}
-  });
+  })

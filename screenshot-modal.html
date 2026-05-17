@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ru">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Modal Preview Helper</title>
+    <style>
+      :root {
+        color-scheme: light;
+        font-family: Manrope, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: #eef3ef;
+        color: #243127;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        gap: 16px;
+        align-content: start;
+        padding: 20px;
+        background:
+          radial-gradient(circle at top left, rgba(255, 230, 191, 0.45), transparent 24%),
+          linear-gradient(180deg, #f7fbf7, #e9f0ea);
+      }
+
+      .panel {
+        width: min(100%, 880px);
+        margin: 0 auto;
+        padding: 18px;
+        border-radius: 22px;
+        background: rgba(255, 255, 255, 0.86);
+        border: 1px solid rgba(211, 221, 212, 0.95);
+        box-shadow: 0 18px 36px rgba(93, 117, 101, 0.14);
+      }
+
+      h1,
+      p {
+        margin: 0;
+      }
+
+      .copy {
+        display: grid;
+        gap: 8px;
+      }
+
+      .copy p {
+        color: #627066;
+        line-height: 1.45;
+      }
+
+      .controls {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 14px;
+      }
+
+      .button {
+        display: inline-flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 42px;
+        padding: 0 16px;
+        border-radius: 999px;
+        border: 1px solid #d5e0d6;
+        background: #fffdfa;
+        color: #243127;
+        text-decoration: none;
+        font-weight: 700;
+      }
+
+      .button.primary {
+        background: linear-gradient(135deg, #4e9b72 0%, #397b58 100%);
+        border-color: transparent;
+        color: #f8fffb;
+      }
+
+      .phone-shell {
+        width: min(100%, 430px);
+        margin: 0 auto;
+        padding: 12px;
+        border-radius: 36px;
+        background: #1f2521;
+        box-shadow: 0 24px 60px rgba(42, 56, 47, 0.22);
+      }
+
+      iframe {
+        display: block;
+        width: 100%;
+        aspect-ratio: 390 / 844;
+        border: 0;
+        border-radius: 28px;
+        background: #fff;
+      }
+
+      .hint {
+        margin-top: 12px;
+        font-size: 0.92rem;
+        color: #627066;
+      }
+    </style>
+  </head>
+  <body>
+    <section class="panel">
+      <div class="copy">
+        <h1>Предпросмотр модалки на телефоне</h1>
+        <p>
+          Эта страница удобна для ручной проверки. Она открывает локальное приложение в мобильном
+          фрейме и может сразу показать нужную модалку через hash-параметры.
+        </p>
+      </div>
+
+      <div class="controls">
+        <a
+          class="button primary"
+          href="http://127.0.0.1:5173/#screen=regular&previewRegular=%D0%9A%D0%B0%D1%80%D0%BC%D0%B0%D0%BD%D0%BD%D1%8B%D0%B5+Revolut"
+          target="_blank"
+          rel="noreferrer"
+        >
+          Открыть в новой вкладке
+        </a>
+        <a
+          class="button"
+          href="http://127.0.0.1:5173/#screen=regular&previewRegular=%D0%9A%D0%B0%D1%80%D0%BC%D0%B0%D0%BD%D0%BD%D1%8B%D0%B5+Revolut"
+        >
+          Перезагрузить превью
+        </a>
+      </div>
+
+      <p class="hint">
+        Нужен запущенный dev-сервер: <code>npm run dev -- --host 127.0.0.1</code>
+      </p>
+    </section>
+
+    <div class="phone-shell">
+      <iframe
+        id="preview-frame"
+        src="http://127.0.0.1:5173/#screen=regular&previewRegular=%D0%9A%D0%B0%D1%80%D0%BC%D0%B0%D0%BD%D0%BD%D1%8B%D0%B5+Revolut"
+        title="Mobile modal preview"
+      ></iframe>
+    </div>
+  </body>
+</html>

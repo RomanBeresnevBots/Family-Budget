@@ -1,26 +1,19 @@
-const { Client } = require("pg");
+const { createSupabaseClient } = require("./lib/db.cjs")
 
-const client = new Client({
-  host: "aws-0-eu-west-1.pooler.supabase.com",
-  port: 5432,
-  user: "postgres.qlsouerrwwyqjmuicxxr",
-  password: "zingom-1zamfi-wefFoc",
-  database: "postgres",
-  ssl: { rejectUnauthorized: false },
-});
+const client = createSupabaseClient()
 
 async function main() {
-  await client.connect();
+  await client.connect()
 
   const { rows: users } = await client.query(
-    "select id, email from auth.users order by created_at asc",
-  );
+    "select id, email from auth.users order by created_at asc"
+  )
 
   if (!users.length) {
-    throw new Error("No auth users found in Supabase.");
+    throw new Error("No auth users found in Supabase.")
   }
 
-  const user = users[0];
+  const user = users[0]
 
   const { rows: stats } = await client.query(`
     with counts as (
@@ -42,15 +35,15 @@ async function main() {
     left join counts c on c.household_id = h.id
     group by h.id, h.name, h.owner_user_id, h.created_at
     order by total_rows desc, h.created_at desc
-  `);
+  `)
 
   if (!stats.length) {
-    throw new Error("No households found in Supabase.");
+    throw new Error("No households found in Supabase.")
   }
 
-  const primaryHousehold = stats[0];
+  const primaryHousehold = stats[0]
 
-  await client.query("begin");
+  await client.query("begin")
 
   await client.query(
     `
@@ -58,8 +51,8 @@ async function main() {
       set owner_user_id = $2
       where id = $1
     `,
-    [primaryHousehold.id, user.id],
-  );
+    [primaryHousehold.id, user.id]
+  )
 
   await client.query(
     `
@@ -68,10 +61,10 @@ async function main() {
       on conflict (household_id, user_id)
       do update set role = excluded.role
     `,
-    [primaryHousehold.id, user.id],
-  );
+    [primaryHousehold.id, user.id]
+  )
 
-  const memberUsers = users.filter((candidate) => candidate.id !== user.id);
+  const memberUsers = users.filter((candidate) => candidate.id !== user.id)
 
   for (const memberUser of memberUsers) {
     await client.query(
@@ -81,13 +74,13 @@ async function main() {
         on conflict (household_id, user_id)
         do update set role = excluded.role
       `,
-      [primaryHousehold.id, memberUser.id],
-    );
+      [primaryHousehold.id, memberUser.id]
+    )
   }
 
   const removableHouseholds = stats
     .filter((household) => household.id !== primaryHousehold.id && household.total_rows === 0)
-    .map((household) => household.id);
+    .map((household) => household.id)
 
   if (removableHouseholds.length) {
     await client.query(
@@ -96,11 +89,11 @@ async function main() {
         where id = any($1::uuid[])
           and owner_user_id is null
       `,
-      [removableHouseholds],
-    );
+      [removableHouseholds]
+    )
   }
 
-  await client.query("commit");
+  await client.query("commit")
 
   console.log(
     JSON.stringify(
@@ -112,22 +105,22 @@ async function main() {
         removedEmptyHouseholds: removableHouseholds,
       },
       null,
-      2,
-    ),
-  );
+      2
+    )
+  )
 }
 
 main().catch(async (error) => {
   try {
-    await client.query("rollback");
+    await client.query("rollback")
   } catch {}
-  console.error(error);
+  console.error(error)
   try {
-    await client.end();
+    await client.end()
   } catch {}
-  process.exit(1);
+  process.exit(1)
 }).finally(async () => {
   try {
-    await client.end();
+    await client.end()
   } catch {}
-});
+})

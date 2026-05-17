@@ -1,51 +1,129 @@
-import { useEffect, useRef, useMemo, useState } from "react";
-import { getAuthRedirectUrl, isSupabaseConfigured, requireSupabase } from "./lib/supabase";
-import headImageMay from "./assets/head-image-may.png";
-import burgerIcon from "./assets/burger-icon.png";
-import arrowIcon from "./assets/arrow-icon.png";
+import { useEffect, useRef, useMemo, useState } from "react"
+import {
+  getAuthRedirectUrl,
+  isSupabaseConfigured,
+  requireSupabase,
+} from "./lib/supabase"
+import {
+  getMobileFooterKey,
+  getNavigationStateForMenuItem,
+  getNavigationStateForMobileKey,
+  isNavigationItemActive,
+  mobileFooterItems,
+  navigationItems,
+  readNavigationStateFromLocation,
+} from "./lib/app-navigation"
+import {
+  buildSqlDate as buildBudgetSqlDate,
+  dbFrequencyToUi,
+  fullMonthNames,
+  getMonthIndexByValue as getBudgetMonthIndexByValue,
+  getMonthNameByNumber,
+  getMonthNumberFromValue as getBudgetMonthNumberFromValue,
+  getMonthShortByNumber,
+  monthOptions,
+  normalizeMonthName as normalizeBudgetMonthName,
+  parseSqlDateParts,
+  uiFrequencyToDb,
+} from "./lib/budget-core"
+import { createBudgetRepository } from "./lib/budget-repository"
+import { useBudgetInsights } from "./lib/use-budget-insights"
+import { useCashflowInsights } from "./lib/use-cashflow-insights"
+import { useNavigationHistory } from "./lib/use-navigation-history"
+import arrowIcon from "./assets/arrow-icon.png"
+import aprilBackground from "./assets/month-backgrounds/april.png"
+import augustBackground from "./assets/month-backgrounds/august.png"
+import decemberBackground from "./assets/month-backgrounds/december.png"
+import februaryBackground from "./assets/month-backgrounds/february.png"
+import januaryBackground from "./assets/month-backgrounds/january.png"
+import julyBackground from "./assets/month-backgrounds/july.png"
+import juneBackground from "./assets/month-backgrounds/june.png"
+import marchBackground from "./assets/month-backgrounds/march.png"
+import mayBackground from "./assets/month-backgrounds/may.png"
+import novemberBackground from "./assets/month-backgrounds/november.png"
+import octoberBackground from "./assets/month-backgrounds/october.png"
+import septemberBackground from "./assets/month-backgrounds/september.png"
 
-const navigationItems = [
-  "Бюджет",
-  "Денежный поток",
-  "Доходы",
-  "Аналитика",
-  "Памятные даты",
-  "Настройка",
-];
+const seededCurrentYear = new Date().getFullYear()
+const localPreviewHosts = new Set(["localhost", "127.0.0.1", "::1", "[::1]"])
+const isLocalPreviewForced = import.meta.env.VITE_LOCAL_PREVIEW === "1"
 
-const supportedScreenNames = new Set([
-  "month",
-  "nextMonth",
-  "regular",
-  "months",
-  "periodMonth",
-  "cashflow",
-  "incomes",
-  "analytics",
-  "settings",
-  "categories",
-]);
+function readHashSearchParams() {
+  if (typeof window === "undefined") {
+    return new URLSearchParams()
+  }
 
-const seededCurrentYear = new Date().getFullYear();
+  const hash = window.location.hash.startsWith("#")
+    ? window.location.hash.slice(1)
+    : ""
+  return new URLSearchParams(hash)
+}
 
-const mobileHeroImageByScreen = {
-  month: headImageMay,
-  nextMonth: headImageMay,
-  regular: headImageMay,
-  months: headImageMay,
-  periodMonth: headImageMay,
-  cashflow: headImageMay,
-  incomes: headImageMay,
-  analytics: headImageMay,
-  settings: headImageMay,
-  categories: headImageMay,
-  cashflowAccounts: headImageMay,
-  cashflowFunds: headImageMay,
-  default: headImageMay,
-};
+function canUseLocalPreview() {
+  if (typeof window === "undefined" || !import.meta.env.DEV) {
+    return false
+  }
 
-function getMobileHeroImage(screen) {
-  return mobileHeroImageByScreen[screen] ?? mobileHeroImageByScreen.default;
+  return localPreviewHosts.has(window.location.hostname)
+}
+
+function isLocalPreviewModeEnabled() {
+  return (
+    canUseLocalPreview() &&
+    (isLocalPreviewForced || readHashSearchParams().get("preview") === "1")
+  )
+}
+
+function shouldUseSupabaseStorage() {
+  return isSupabaseConfigured && !isLocalPreviewModeEnabled()
+}
+
+const monthBackgroundByName = {
+  Январь: januaryBackground,
+  Февраль: februaryBackground,
+  Март: marchBackground,
+  Апрель: aprilBackground,
+  Май: mayBackground,
+  Июнь: juneBackground,
+  Июль: julyBackground,
+  Август: augustBackground,
+  Сентябрь: septemberBackground,
+  Октябрь: octoberBackground,
+  Ноябрь: novemberBackground,
+  Декабрь: decemberBackground,
+}
+
+function getMonthBackgroundByName(monthName) {
+  const normalizedMonthName = normalizeBudgetMonthName(monthName)
+  return (
+    monthBackgroundByName[normalizedMonthName] ??
+    monthBackgroundByName[getDefaultBudgetMonthName()]
+  )
+}
+
+function getActiveBackgroundMonthContext(
+  screen,
+  currentMonthContext,
+  nextMonthContext,
+  selectedPeriodContext
+) {
+  if (screen === "nextMonth") {
+    return nextMonthContext
+  }
+
+  if (screen === "periodMonth" && selectedPeriodContext) {
+    return selectedPeriodContext
+  }
+
+  return currentMonthContext
+}
+
+function isKnownBudgetMonthName(month) {
+  return fullMonthNames.includes(month)
+}
+
+function getDefaultBudgetMonthName() {
+  return fullMonthNames[new Date().getMonth()] ?? fullMonthNames[0]
 }
 
 function createSeedExpense({
@@ -75,7 +153,7 @@ function createSeedExpense({
     payer,
     month,
     year,
-  };
+  }
 }
 
 const initialMembers = [
@@ -383,23 +461,8 @@ const initialMembers = [
       }),
     ],
   },
-];
+]
 
-const monthOptions = ["Янв", "Фев", "Мар", "Апр", "Май", "Июн", "Июл", "Авг", "Сен", "Окт", "Ноя", "Дек"];
-const fullMonthNames = [
-  "Январь",
-  "Февраль",
-  "Март",
-  "Апрель",
-  "Май",
-  "Июнь",
-  "Июль",
-  "Август",
-  "Сентябрь",
-  "Октябрь",
-  "Ноябрь",
-  "Декабрь",
-];
 const monthNamesGenitive = [
   "января",
   "февраля",
@@ -413,7 +476,7 @@ const monthNamesGenitive = [
   "октября",
   "ноября",
   "декабря",
-];
+]
 const monthMeta = [
   { name: "Январь", short: "Янв", icon: "❄️", tone: "#6aa8d8", bg: "#eef8ff" },
   { name: "Февраль", short: "Фев", icon: "🧤", tone: "#8e86d8", bg: "#f1efff" },
@@ -423,13 +486,19 @@ const monthMeta = [
   { name: "Июнь", short: "Июн", icon: "🌼", tone: "#d3a24a", bg: "#fff7e9" },
   { name: "Июль", short: "Июл", icon: "🌞", tone: "#e0923d", bg: "#fff4e2" },
   { name: "Август", short: "Авг", icon: "🌾", tone: "#b98f43", bg: "#fbf4e4" },
-  { name: "Сентябрь", short: "Сен", icon: "🍎", tone: "#c66554", bg: "#fff0ec" },
+  {
+    name: "Сентябрь",
+    short: "Сен",
+    icon: "🍎",
+    tone: "#c66554",
+    bg: "#fff0ec",
+  },
   { name: "Октябрь", short: "Окт", icon: "🎃", tone: "#da7a39", bg: "#fff3e8" },
   { name: "Ноябрь", short: "Ноя", icon: "🍂", tone: "#a07a53", bg: "#f7f0e7" },
   { name: "Декабрь", short: "Дек", icon: "🎄", tone: "#4f9b73", bg: "#ebf8f0" },
-];
-const ownerOptions = ["Общее", "Рома", "Саша"];
-const payerOptions = ["Рома", "Саша"];
+]
+const ownerOptions = ["Общее", "Рома", "Саша"]
+const payerOptions = ["Рома", "Саша"]
 const categoryColorPalette = [
   "#b87373",
   "#72b28f",
@@ -441,7 +510,7 @@ const categoryColorPalette = [
   "#c48ad6",
   "#8cb26f",
   "#d08f5f",
-];
+]
 const initialCategories = [
   { id: "products", icon: "🥖", label: "Продукты" },
   { id: "restaurants", icon: "🍔", label: "Рестораны" },
@@ -463,25 +532,32 @@ const initialCategories = [
   { id: "help", icon: "🤝", label: "Помощь" },
   { id: "alimony", icon: "👱", label: "Алименты" },
   { id: "investments", icon: "💰", label: "Инвестиции" },
-];
+]
+const fallbackCategory = {
+  id: "uncategorized",
+  icon: "🗂️",
+  label: "Без категории",
+}
 
-const STORAGE_KEY = "family-budget-prototype-members-v2";
-const CATEGORY_STORAGE_KEY = "family-budget-prototype-categories-v2";
-const CATEGORY_ICON_COLOR_MIGRATION_KEY = "family-budget-prototype-category-icon-colors-v2";
-const REGULAR_EXPENSES_STORAGE_KEY = "family-budget-prototype-regular-expenses-v2";
-const CASHFLOW_STORAGE_KEY = "family-budget-prototype-cashflow-v1";
-const STORAGE_RESET_KEY = "family-budget-prototype-storage-reset-v1";
-const TRACKED_YEARS_STORAGE_KEY = "family-budget-prototype-tracked-years-v1";
-const EXPANDED_YEARS_STORAGE_KEY = "family-budget-prototype-expanded-years-v1";
-const DEFAULT_HOUSEHOLD_NAME = "Family Budget";
-const DEFAULT_CASHFLOW_CURRENCY = "CZK";
-const cashflowCurrencyOptions = ["CZK", "EUR", "USD", "RUB"];
+const STORAGE_KEY = "family-budget-prototype-members-v2"
+const CATEGORY_STORAGE_KEY = "family-budget-prototype-categories-v2"
+const CATEGORY_ICON_COLOR_MIGRATION_KEY =
+  "family-budget-prototype-category-icon-colors-v2"
+const REGULAR_EXPENSES_STORAGE_KEY =
+  "family-budget-prototype-regular-expenses-v2"
+const CASHFLOW_STORAGE_KEY = "family-budget-prototype-cashflow-v1"
+const STORAGE_RESET_KEY = "family-budget-prototype-storage-reset-v1"
+const TRACKED_YEARS_STORAGE_KEY = "family-budget-prototype-tracked-years-v1"
+const EXPANDED_YEARS_STORAGE_KEY = "family-budget-prototype-expanded-years-v1"
+const DEFAULT_HOUSEHOLD_NAME = "Family Budget"
+const DEFAULT_CASHFLOW_CURRENCY = "CZK"
+const cashflowCurrencyOptions = ["CZK", "EUR", "USD", "RUB"]
 const cashflowAccountTypeOptions = [
   { value: "bank", label: "Банк" },
   { value: "cash", label: "Наличные" },
   { value: "broker", label: "Брокер" },
   { value: "other", label: "Другое" },
-];
+]
 const cashflowAssetTypeOptions = [
   { value: "cash", label: "Наличные" },
   { value: "bank_account", label: "Банковский счёт" },
@@ -490,57 +566,57 @@ const cashflowAssetTypeOptions = [
   { value: "crypto", label: "Крипто" },
   { value: "metals", label: "Металлы" },
   { value: "other", label: "Другое" },
-];
+]
 const cashflowIncomeOwnerOptions = [
   { value: "roma", label: "Рома" },
   { value: "sasha", label: "Саша" },
   { value: "shared", label: "Общее" },
-];
+]
 const cashflowIncomeTypeOptions = [
   { value: "salary", label: "Зарплата" },
   { value: "bonus", label: "Бонус" },
   { value: "refund", label: "Возврат" },
   { value: "gift", label: "Подарок" },
   { value: "other", label: "Другое" },
-];
+]
 const cashflowIncomeStatusOptions = [
   { value: "expected", label: "Ожидается" },
   { value: "received", label: "Получено" },
-];
+]
 const cashflowTargetModeOptions = [
   { value: "manual", label: "Вручную" },
   { value: "auto_average_mandatory_budget", label: "Авто от регулярных трат" },
-];
+]
 const cashflowFundTypeMeta = {
   budget_reserve: { label: "Бюджетная кубышка", icon: "🪙" },
   emergency_reserve: { label: "Сейф безопасности", icon: "🛟" },
   investments: { label: "Инвестиции", icon: "📈" },
   savings_goal: { label: "Накопления", icon: "🎯" },
   free_balance: { label: "Свободный остаток", icon: "💵" },
-};
+}
 const cashflowSystemFundTypes = [
   "budget_reserve",
   "emergency_reserve",
   "investments",
   "savings_goal",
   "free_balance",
-];
+]
 
-let prototypeStoragePrepared = false;
+let prototypeStoragePrepared = false
 
 function preparePrototypeStorage() {
   if (typeof window === "undefined" || prototypeStoragePrepared) {
-    return;
+    return
   }
 
-  prototypeStoragePrepared = true;
+  prototypeStoragePrepared = true
 
   try {
     if (window.localStorage.getItem(STORAGE_RESET_KEY) === "done") {
-      return;
+      return
     }
 
-    [
+    ;[
       "family-budget-prototype-members-april-seed-v1",
       "family-budget-prototype-members-v2",
       "family-budget-prototype-categories",
@@ -549,181 +625,272 @@ function preparePrototypeStorage() {
       "family-budget-prototype-category-icon-colors-v2",
       "family-budget-prototype-regular-expenses-v1",
       "family-budget-prototype-regular-expenses-v2",
-    ].forEach((key) => window.localStorage.removeItem(key));
+    ].forEach((key) => window.localStorage.removeItem(key))
 
-    window.localStorage.setItem(STORAGE_RESET_KEY, "done");
+    window.localStorage.setItem(STORAGE_RESET_KEY, "done")
   } catch {
     // ignore storage reset failures
   }
 }
 
 function formatNumberInput(value) {
-  const digits = String(value ?? "").replace(/\D/g, "");
-  return digits ? formatCurrency(Number(digits)) : "";
+  const digits = String(value ?? "").replace(/\D/g, "")
+  return digits ? formatCurrency(Number(digits)) : ""
 }
 
 function parseDigits(value) {
-  return String(value ?? "").replace(/\D/g, "");
+  return String(value ?? "").replace(/\D/g, "")
 }
 
 function formatCurrency(value) {
-  return new Intl.NumberFormat("ru-RU").format(value).replaceAll(",", " ");
+  return new Intl.NumberFormat("ru-RU").format(value).replaceAll(",", " ")
 }
 
 function formatCategoryOption(category) {
-  return `${category.icon} ${category.label}`;
+  return `${category.icon} ${category.label}`
 }
 
 function getCategoryColor(categoryLabel, categories) {
-  const matchedCategory = categories.find((item) => item.label === categoryLabel);
-  return matchedCategory?.color ?? categoryColorPalette[0];
-}
-
-function uiFrequencyToDb(frequency) {
-  if (frequency === "Раз в год") {
-    return "yearly";
-  }
-
-  if (frequency === "Единоразово") {
-    return "one_time";
-  }
-
-  return "monthly";
-}
-
-function dbFrequencyToUi(frequency) {
-  if (frequency === "yearly") {
-    return "Раз в год";
-  }
-
-  if (frequency === "one_time") {
-    return "Единоразово";
-  }
-
-  return "Каждый месяц";
+  const matchedCategory = categories.find(
+    (item) => item.label === categoryLabel
+  )
+  return matchedCategory?.color ?? categoryColorPalette[0]
 }
 
 function getMonthNumberFromValue(value) {
-  return Math.max(getMonthIndexByValue(value), 0) + 1;
-}
-
-function getMonthShortByNumber(monthNumber) {
-  return monthOptions[Math.max(monthNumber - 1, 0)] ?? monthOptions[0];
-}
-
-function getMonthNameByNumber(monthNumber) {
-  return fullMonthNames[Math.max(monthNumber - 1, 0)] ?? fullMonthNames[0];
+  return getBudgetMonthNumberFromValue(value, getDefaultBudgetMonthName())
 }
 
 function buildSqlDate(year, monthValue, day = 1) {
-  const monthNumber = typeof monthValue === "number" ? monthValue : getMonthNumberFromValue(monthValue);
-  return `${year}-${String(monthNumber).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
-}
-
-function parseSqlDateParts(sqlDate) {
-  const raw = String(sqlDate ?? "");
-  const datePart = raw.includes("T") ? raw.split("T")[0] : raw;
-  const [year, month, day] = datePart.split("-").map((item) => Number(item));
-
-  return {
-    year: Number.isFinite(year) ? year : 0,
-    month: Number.isFinite(month) ? month : 0,
-    day: Number.isFinite(day) ? day : 0,
-  };
+  return buildBudgetSqlDate(year, monthValue, day, getDefaultBudgetMonthName())
 }
 
 function clampColorChannel(value) {
-  return Math.max(0, Math.min(255, Math.round(value)));
+  return Math.max(0, Math.min(255, Math.round(value)))
 }
 
 function rgbToHex(red, green, blue) {
   return `#${[red, green, blue]
     .map((value) => clampColorChannel(value).toString(16).padStart(2, "0"))
-    .join("")}`;
+    .join("")}`
 }
 
 function mixColorWithWhite(hexColor, ratio = 0.18) {
-  const sanitized = hexColor.replace("#", "");
-  const red = Number.parseInt(sanitized.slice(0, 2), 16);
-  const green = Number.parseInt(sanitized.slice(2, 4), 16);
-  const blue = Number.parseInt(sanitized.slice(4, 6), 16);
+  const sanitized = hexColor.replace("#", "")
+  const red = Number.parseInt(sanitized.slice(0, 2), 16)
+  const green = Number.parseInt(sanitized.slice(2, 4), 16)
+  const blue = Number.parseInt(sanitized.slice(4, 6), 16)
 
   return rgbToHex(
     red + (255 - red) * ratio,
     green + (255 - green) * ratio,
-    blue + (255 - blue) * ratio,
-  );
+    blue + (255 - blue) * ratio
+  )
 }
 
 function inferColorFromEmoji(icon) {
-  if (typeof window === "undefined" || typeof document === "undefined" || !icon?.trim()) {
-    return null;
+  if (
+    typeof window === "undefined" ||
+    typeof document === "undefined" ||
+    !icon?.trim()
+  ) {
+    return null
   }
 
-  const canvas = document.createElement("canvas");
-  canvas.width = 64;
-  canvas.height = 64;
-  const context = canvas.getContext("2d", { willReadFrequently: true });
+  const canvas = document.createElement("canvas")
+  canvas.width = 64
+  canvas.height = 64
+  const context = canvas.getContext("2d", { willReadFrequently: true })
 
   if (!context) {
-    return null;
+    return null
   }
 
-  context.clearRect(0, 0, canvas.width, canvas.height);
-  context.textAlign = "center";
-  context.textBaseline = "middle";
-  context.font = '48px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif';
-  context.fillText(icon, canvas.width / 2, canvas.height / 2 + 2);
+  context.clearRect(0, 0, canvas.width, canvas.height)
+  context.textAlign = "center"
+  context.textBaseline = "middle"
+  context.font =
+    '48px "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif'
+  context.fillText(icon, canvas.width / 2, canvas.height / 2 + 2)
 
-  const { data } = context.getImageData(0, 0, canvas.width, canvas.height);
-  let red = 0;
-  let green = 0;
-  let blue = 0;
-  let pixels = 0;
+  const { data } = context.getImageData(0, 0, canvas.width, canvas.height)
+  let red = 0
+  let green = 0
+  let blue = 0
+  let pixels = 0
 
   for (let index = 0; index < data.length; index += 4) {
-    const alpha = data[index + 3];
+    const alpha = data[index + 3]
     if (alpha < 24) {
-      continue;
+      continue
     }
 
-    red += data[index];
-    green += data[index + 1];
-    blue += data[index + 2];
-    pixels += 1;
+    red += data[index]
+    green += data[index + 1]
+    blue += data[index + 2]
+    pixels += 1
   }
 
   if (!pixels) {
-    return null;
+    return null
   }
 
   return mixColorWithWhite(
     rgbToHex(red / pixels, green / pixels, blue / pixels),
-    0.2,
-  );
+    0.2
+  )
 }
 
 function getDefaultCategoryColor(icon, index = 0) {
-  return inferColorFromEmoji(icon) ?? categoryColorPalette[index % categoryColorPalette.length];
+  return (
+    inferColorFromEmoji(icon) ??
+    categoryColorPalette[index % categoryColorPalette.length]
+  )
 }
 
 function ensureCategoryColor(category, index = 0) {
   return {
     ...category,
     color: category.color ?? getDefaultCategoryColor(category.icon, index),
-  };
+  }
+}
+
+function normalizeCategoryLabel(label) {
+  return String(label ?? "")
+    .trim()
+    .toLowerCase()
+}
+
+function ensureFallbackCategory(categories = []) {
+  const existingFallback = categories.find(
+    (category) =>
+      normalizeCategoryLabel(category.label) ===
+      normalizeCategoryLabel(fallbackCategory.label)
+  )
+
+  if (existingFallback) {
+    return categories.map((category, index) =>
+      ensureCategoryColor(category, index)
+    )
+  }
+
+  return [
+    ...categories.map((category, index) =>
+      ensureCategoryColor(category, index)
+    ),
+    ensureCategoryColor(fallbackCategory, categories.length),
+  ]
+}
+
+function replaceCategoryLabelInSnapshot(snapshot, fromLabel, toLabel) {
+  return {
+    ...snapshot,
+    members: snapshot.members.map((member) => ({
+      ...member,
+      expenses: member.expenses.map((expense) =>
+        expense.category !== fromLabel
+          ? expense
+          : {
+              ...expense,
+              category: toLabel,
+            }
+      ),
+    })),
+    regularExpenses: snapshot.regularExpenses.map((template) =>
+      template.category !== fromLabel
+        ? template
+        : {
+            ...template,
+            category: toLabel,
+          }
+    ),
+  }
+}
+
+function ensureSnapshotCategoryIntegrity(snapshot) {
+  const normalizedCategories = (snapshot.categories ?? []).map(
+    (category, index) => ensureCategoryColor(category, index)
+  )
+  const knownCategoryLabels = new Set(
+    normalizedCategories.map((category) =>
+      normalizeCategoryLabel(category.label)
+    )
+  )
+  const hasMissingExpenseCategory = (snapshot.members ?? []).some((member) =>
+    member.expenses.some(
+      (expense) =>
+        !knownCategoryLabels.has(normalizeCategoryLabel(expense.category))
+    )
+  )
+  const hasMissingRegularCategory = (snapshot.regularExpenses ?? []).some(
+    (template) =>
+      !knownCategoryLabels.has(normalizeCategoryLabel(template.category))
+  )
+  const needsFallbackCategory =
+    normalizedCategories.some(
+      (category) =>
+        normalizeCategoryLabel(category.label) ===
+        normalizeCategoryLabel(fallbackCategory.label)
+    ) ||
+    hasMissingExpenseCategory ||
+    hasMissingRegularCategory
+  const categoriesWithFallback = needsFallbackCategory
+    ? ensureFallbackCategory(normalizedCategories)
+    : normalizedCategories
+  const normalizedKnownCategoryLabels = new Set(
+    categoriesWithFallback.map((category) =>
+      normalizeCategoryLabel(category.label)
+    )
+  )
+  const fallbackLabel = fallbackCategory.label
+
+  return {
+    ...snapshot,
+    categories: categoriesWithFallback,
+    members: (snapshot.members ?? []).map((member) => ({
+      ...member,
+      expenses: member.expenses.map((expense) => {
+        if (
+          normalizedKnownCategoryLabels.has(
+            normalizeCategoryLabel(expense.category)
+          )
+        ) {
+          return expense
+        }
+
+        return {
+          ...expense,
+          category: fallbackLabel,
+        }
+      }),
+    })),
+    regularExpenses: (snapshot.regularExpenses ?? []).map((template) => {
+      if (
+        normalizedKnownCategoryLabels.has(
+          normalizeCategoryLabel(template.category)
+        )
+      ) {
+        return template
+      }
+
+      return {
+        ...template,
+        category: fallbackLabel,
+      }
+    }),
+  }
 }
 
 function createRegularTemplateFromExpense(member, expense, index = 0) {
-  const monthName = normalizeMonthName(expense.month);
-  const monthIndex = fullMonthNames.findIndex((item) => item === monthName);
-  const expenseYear = expense.year ?? seededCurrentYear;
+  const monthName = normalizeMonthName(expense.month)
+  const monthIndex = fullMonthNames.findIndex((item) => item === monthName)
+  const expenseYear = expense.year ?? seededCurrentYear
   const initialEffectiveContext = getInitialRegularEffectiveContext({
     seedYear: expenseYear,
     seedMonthName: monthName,
     dayOfMonth: getExpenseDayOfMonth(expense),
     frequency: detectFrequency(expense),
-  });
+  })
 
   return {
     id: `regular-${expense.id}`,
@@ -747,79 +914,101 @@ function createRegularTemplateFromExpense(member, expense, index = 0) {
       },
     ],
     sortOrder: index,
-  };
+  }
 }
 
 function buildRegularTemplateFromExpense(member, expense, index = 0) {
-  return createRegularTemplateFromExpense(member, expense, index);
+  return createRegularTemplateFromExpense(member, expense, index)
 }
 
 function normalizeBudgetSnapshot(snapshot) {
-  return {
+  return ensureSnapshotCategoryIntegrity({
     ...snapshot,
     regularExpenses: dedupeRegularTemplates(snapshot.regularExpenses ?? []),
-  };
+  })
 }
 
 function createEmptyMembers() {
   return initialMembers.map((member) => ({
     ...member,
     expenses: [],
-  }));
+  }))
 }
 
 function createPrototypeRegularExpenses(seedMembers = initialMembers) {
   return seedMembers.flatMap((member, memberIndex) =>
     member.expenses.map((expense, expenseIndex) =>
-      createRegularTemplateFromExpense(member, expense, memberIndex * 1000 + expenseIndex),
-    ),
-  );
+      createRegularTemplateFromExpense(
+        member,
+        expense,
+        memberIndex * 1000 + expenseIndex
+      )
+    )
+  )
 }
 
 function hasMeaningfulMemberData(memberList = []) {
-  return memberList.some((member) => Array.isArray(member.expenses) && member.expenses.length > 0);
+  return memberList.some(
+    (member) => Array.isArray(member.expenses) && member.expenses.length > 0
+  )
 }
 
-function hasMeaningfulSnapshotData({ members = [], categories = [], regularExpenses = [] }) {
-  return hasMeaningfulMemberData(members) || categories.length > 0 || regularExpenses.length > 0;
+function hasMeaningfulSnapshotData({
+  members = [],
+  categories = [],
+  regularExpenses = [],
+}) {
+  return (
+    hasMeaningfulMemberData(members) ||
+    categories.length > 0 ||
+    regularExpenses.length > 0
+  )
 }
 
 function isExpenseInPeriod(expense, year, monthName) {
-  const expenseYear = expense.year ?? year;
-  const expenseMonth = normalizeMonthName(expense.month);
+  const expenseYear = expense.year ?? year
+  const expenseMonth = normalizeMonthName(expense.month)
 
-  return expenseYear === year && expenseMonth === monthName;
+  return expenseYear === year && expenseMonth === monthName
 }
 
 function getInitialRegularExpenses(seedMembers) {
   if (typeof window === "undefined") {
-    return hasMeaningfulMemberData(seedMembers) ? createPrototypeRegularExpenses(seedMembers) : [];
+    return hasMeaningfulMemberData(seedMembers)
+      ? createPrototypeRegularExpenses(seedMembers)
+      : []
   }
 
-  if (isSupabaseConfigured) {
-    return [];
+  if (shouldUseSupabaseStorage()) {
+    return []
   }
 
-  preparePrototypeStorage();
+  preparePrototypeStorage()
 
   try {
-    const savedTemplates = window.localStorage.getItem(REGULAR_EXPENSES_STORAGE_KEY);
+    const savedTemplates = window.localStorage.getItem(
+      REGULAR_EXPENSES_STORAGE_KEY
+    )
     if (savedTemplates) {
-      return JSON.parse(savedTemplates);
+      return JSON.parse(savedTemplates)
     }
   } catch {
     // fall through to seeded generation
   }
 
-  return hasMeaningfulMemberData(seedMembers) ? createPrototypeRegularExpenses(seedMembers) : [];
+  return hasMeaningfulMemberData(seedMembers)
+    ? createPrototypeRegularExpenses(seedMembers)
+    : []
 }
 
 function createDefaultCategories() {
-  return initialCategories.map((category, index) => ensureCategoryColor(category, index));
+  return initialCategories.map((category, index) =>
+    ensureCategoryColor(category, index)
+  )
 }
 
 function getDefaultTrackedYears(currentYear = getCurrentMonthContext().year) {
-  return [currentYear, currentYear - 1, currentYear - 2];
+  return [currentYear, currentYear - 1, currentYear - 2]
 }
 
 function getDefaultExpandedYears(currentYear = getCurrentMonthContext().year) {
@@ -827,99 +1016,111 @@ function getDefaultExpandedYears(currentYear = getCurrentMonthContext().year) {
     [currentYear]: true,
     [currentYear - 1]: false,
     [currentYear - 2]: false,
-  };
+  }
 }
 
 function getInitialTrackedYears() {
-  const currentYear = getCurrentMonthContext().year;
+  const currentYear = getCurrentMonthContext().year
 
   if (typeof window === "undefined") {
-    return getDefaultTrackedYears(currentYear);
+    return getDefaultTrackedYears(currentYear)
   }
 
   try {
-    const savedValue = window.localStorage.getItem(TRACKED_YEARS_STORAGE_KEY);
+    const savedValue = window.localStorage.getItem(TRACKED_YEARS_STORAGE_KEY)
     if (!savedValue) {
-      return getDefaultTrackedYears(currentYear);
+      return getDefaultTrackedYears(currentYear)
     }
 
-    const parsed = JSON.parse(savedValue);
+    const parsed = JSON.parse(savedValue)
     if (!Array.isArray(parsed)) {
-      return getDefaultTrackedYears(currentYear);
+      return getDefaultTrackedYears(currentYear)
     }
 
-    const normalized = [...new Set(parsed.map((value) => Number(value)).filter(Number.isFinite))].sort((left, right) => right - left);
-    return normalized.length ? normalized : [currentYear];
+    const normalized = [
+      ...new Set(parsed.map((value) => Number(value)).filter(Number.isFinite)),
+    ].sort((left, right) => right - left)
+    return normalized.length ? normalized : [currentYear]
   } catch {
-    return getDefaultTrackedYears(currentYear);
+    return getDefaultTrackedYears(currentYear)
   }
 }
 
 function getInitialExpandedYears(trackedYears) {
-  const currentYear = getCurrentMonthContext().year;
-  const fallbackYears = trackedYears.length ? trackedYears : [currentYear];
+  const currentYear = getCurrentMonthContext().year
+  const fallbackYears = trackedYears.length ? trackedYears : [currentYear]
 
   if (typeof window === "undefined") {
-    return getDefaultExpandedYears(currentYear);
+    return getDefaultExpandedYears(currentYear)
   }
 
   try {
-    const savedValue = window.localStorage.getItem(EXPANDED_YEARS_STORAGE_KEY);
+    const savedValue = window.localStorage.getItem(EXPANDED_YEARS_STORAGE_KEY)
     if (!savedValue) {
       return Object.fromEntries(
-        fallbackYears.map((year, index) => [year, index === 0]),
-      );
+        fallbackYears.map((year, index) => [year, index === 0])
+      )
     }
 
-    const parsed = JSON.parse(savedValue);
+    const parsed = JSON.parse(savedValue)
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return Object.fromEntries(
-        fallbackYears.map((year, index) => [year, index === 0]),
-      );
+        fallbackYears.map((year, index) => [year, index === 0])
+      )
     }
 
     return Object.fromEntries(
-      fallbackYears.map((year, index) => [year, Boolean(parsed[year]) || (!Object.prototype.hasOwnProperty.call(parsed, year) && index === 0)]),
-    );
+      fallbackYears.map((year, index) => [
+        year,
+        Boolean(parsed[year]) ||
+          (!Object.prototype.hasOwnProperty.call(parsed, year) && index === 0),
+      ])
+    )
   } catch {
     return Object.fromEntries(
-      fallbackYears.map((year, index) => [year, index === 0]),
-    );
+      fallbackYears.map((year, index) => [year, index === 0])
+    )
   }
 }
 
 function shiftMonthContext(context, monthOffset) {
-  const monthIndex = context.monthIndex + monthOffset;
-  const yearOffset = Math.floor(monthIndex / 12);
-  const normalizedMonthIndex = ((monthIndex % 12) + 12) % 12;
+  const monthIndex = context.monthIndex + monthOffset
+  const yearOffset = Math.floor(monthIndex / 12)
+  const normalizedMonthIndex = ((monthIndex % 12) + 12) % 12
 
   return {
     monthIndex: normalizedMonthIndex,
     monthName: fullMonthNames[normalizedMonthIndex],
     monthShort: monthOptions[normalizedMonthIndex],
     year: context.year + yearOffset,
-  };
+  }
 }
 
 function getTodaySqlDate() {
-  const now = new Date();
-  return buildSqlDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  const now = new Date()
+  return buildSqlDate(now.getFullYear(), now.getMonth() + 1, now.getDate())
 }
 
 function getCashflowSystemFundLabel(fundType) {
-  return cashflowFundTypeMeta[fundType]?.label ?? fundType;
+  return cashflowFundTypeMeta[fundType]?.label ?? fundType
 }
 
 function getCashflowFundIcon(fundType) {
-  return cashflowFundTypeMeta[fundType]?.icon ?? "💼";
+  return cashflowFundTypeMeta[fundType]?.icon ?? "💼"
 }
 
 function getCashflowOwnerLabel(owner) {
-  return cashflowIncomeOwnerOptions.find((option) => option.value === owner)?.label ?? owner;
+  return (
+    cashflowIncomeOwnerOptions.find((option) => option.value === owner)
+      ?.label ?? owner
+  )
 }
 
 function getCashflowIncomeTypeLabel(type) {
-  return cashflowIncomeTypeOptions.find((option) => option.value === type)?.label ?? type;
+  return (
+    cashflowIncomeTypeOptions.find((option) => option.value === type)?.label ??
+    type
+  )
 }
 
 function createDefaultCashflowFunds(baseCurrency = DEFAULT_CASHFLOW_CURRENCY) {
@@ -931,15 +1132,22 @@ function createDefaultCashflowFunds(baseCurrency = DEFAULT_CASHFLOW_CURRENCY) {
       fundType === "budget_reserve" || fundType === "emergency_reserve"
         ? "auto_average_mandatory_budget"
         : "manual",
-    targetMultiplier: fundType === "budget_reserve" ? 2 : fundType === "emergency_reserve" ? 3 : 0,
+    targetMultiplier:
+      fundType === "budget_reserve"
+        ? 2
+        : fundType === "emergency_reserve"
+          ? 3
+          : 0,
     manualTargetAmount: null,
     currency: baseCurrency,
     isSystem: true,
     isActive: true,
-  }));
+  }))
 }
 
-function createDefaultCashflowSettings(baseCurrency = DEFAULT_CASHFLOW_CURRENCY) {
+function createDefaultCashflowSettings(
+  baseCurrency = DEFAULT_CASHFLOW_CURRENCY
+) {
   return {
     id: "cashflow-settings-default",
     budgetReserveMonthsMultiplier: 2,
@@ -952,12 +1160,12 @@ function createDefaultCashflowSettings(baseCurrency = DEFAULT_CASHFLOW_CURRENCY)
     budgetReservePriorityLabel: "Перевести в бюджетную кубышку",
     emergencyReservePriorityLabel: "Пополнить сейф безопасности",
     investmentsPriorityLabel: "Можно направить в инвестиции и цели",
-  };
+  }
 }
 
 function normalizeCashflowAccount(account, index = 0) {
   if (!account) {
-    return null;
+    return null
   }
 
   return {
@@ -965,15 +1173,18 @@ function normalizeCashflowAccount(account, index = 0) {
     name: String(account.name ?? "").trim(),
     owner: account.owner ?? "shared",
     accountType: account.accountType ?? account.account_type ?? "bank",
-    defaultCurrency: account.defaultCurrency ?? account.default_currency ?? DEFAULT_CASHFLOW_CURRENCY,
+    defaultCurrency:
+      account.defaultCurrency ??
+      account.default_currency ??
+      DEFAULT_CASHFLOW_CURRENCY,
     isActive: account.isActive ?? account.is_active ?? true,
     createdAt: account.createdAt ?? account.created_at ?? null,
-  };
+  }
 }
 
 function normalizeCashflowFund(fund, index = 0) {
   if (!fund) {
-    return null;
+    return null
   }
 
   return {
@@ -981,7 +1192,9 @@ function normalizeCashflowFund(fund, index = 0) {
     name: String(fund.name ?? "").trim(),
     fundType: fund.fundType ?? fund.fund_type ?? "free_balance",
     targetMode: fund.targetMode ?? fund.target_mode ?? "manual",
-    targetMultiplier: Number(fund.targetMultiplier ?? fund.target_multiplier ?? 0),
+    targetMultiplier: Number(
+      fund.targetMultiplier ?? fund.target_multiplier ?? 0
+    ),
     manualTargetAmount:
       fund.manualTargetAmount === null || fund.manualTargetAmount === undefined
         ? null
@@ -990,32 +1203,35 @@ function normalizeCashflowFund(fund, index = 0) {
     isSystem: fund.isSystem ?? fund.is_system ?? false,
     isActive: fund.isActive ?? fund.is_active ?? true,
     createdAt: fund.createdAt ?? fund.created_at ?? null,
-  };
+  }
 }
 
 function normalizeCashflowSnapshot(snapshot, index = 0) {
   if (!snapshot) {
-    return null;
+    return null
   }
 
   return {
     id: snapshot.id ?? `cashflow-snapshot-${index}`,
     accountId: snapshot.accountId ?? snapshot.account_id ?? "",
     fundId: snapshot.fundId ?? snapshot.fund_id ?? "",
-    snapshotDate: snapshot.snapshotDate ?? snapshot.snapshot_date ?? getTodaySqlDate(),
+    snapshotDate:
+      snapshot.snapshotDate ?? snapshot.snapshot_date ?? getTodaySqlDate(),
     amount: Number(snapshot.amount ?? 0),
     currency: snapshot.currency ?? DEFAULT_CASHFLOW_CURRENCY,
     amountCzk: Number(snapshot.amountCzk ?? snapshot.amount_czk ?? 0),
-    exchangeRateToCzk: Number(snapshot.exchangeRateToCzk ?? snapshot.exchange_rate_to_czk ?? 1),
+    exchangeRateToCzk: Number(
+      snapshot.exchangeRateToCzk ?? snapshot.exchange_rate_to_czk ?? 1
+    ),
     assetType: snapshot.assetType ?? snapshot.asset_type ?? "bank_account",
     owner: snapshot.owner ?? "shared",
     createdAt: snapshot.createdAt ?? snapshot.created_at ?? null,
-  };
+  }
 }
 
 function normalizeCashflowIncomeEvent(event, index = 0) {
   if (!event) {
-    return null;
+    return null
   }
 
   return {
@@ -1028,39 +1244,60 @@ function normalizeCashflowIncomeEvent(event, index = 0) {
     actualAmount: Number(event.actualAmount ?? event.actual_amount ?? 0),
     currency: event.currency ?? DEFAULT_CASHFLOW_CURRENCY,
     amountCzk: Number(event.amountCzk ?? event.amount_czk ?? 0),
-    exchangeRateToCzk: Number(event.exchangeRateToCzk ?? event.exchange_rate_to_czk ?? 1),
+    exchangeRateToCzk: Number(
+      event.exchangeRateToCzk ?? event.exchange_rate_to_czk ?? 1
+    ),
     note: event.note ?? "",
     createdAt: event.createdAt ?? event.created_at ?? null,
-  };
+  }
 }
 
 function normalizeCashflowSettings(settings) {
   if (!settings) {
-    return createDefaultCashflowSettings();
+    return createDefaultCashflowSettings()
   }
 
   return {
     id: settings.id ?? "cashflow-settings-default",
     budgetReserveMonthsMultiplier: Number(
-      settings.budgetReserveMonthsMultiplier ?? settings.budget_reserve_months_multiplier ?? 2,
+      settings.budgetReserveMonthsMultiplier ??
+        settings.budget_reserve_months_multiplier ??
+        2
     ),
     emergencyReserveMonthsMultiplier: Number(
-      settings.emergencyReserveMonthsMultiplier ?? settings.emergency_reserve_months_multiplier ?? 3,
+      settings.emergencyReserveMonthsMultiplier ??
+        settings.emergency_reserve_months_multiplier ??
+        3
     ),
     mandatoryBudgetAverageMonths: Number(
-      settings.mandatoryBudgetAverageMonths ?? settings.mandatory_budget_average_months ?? 6,
+      settings.mandatoryBudgetAverageMonths ??
+        settings.mandatory_budget_average_months ??
+        6
     ),
     budgetReserveManualTarget:
-      settings.budgetReserveManualTarget === null || settings.budgetReserveManualTarget === undefined
+      settings.budgetReserveManualTarget === null ||
+      settings.budgetReserveManualTarget === undefined
         ? null
-        : Number(settings.budgetReserveManualTarget ?? settings.budget_reserve_manual_target),
+        : Number(
+            settings.budgetReserveManualTarget ??
+              settings.budget_reserve_manual_target
+          ),
     emergencyReserveManualTarget:
-      settings.emergencyReserveManualTarget === null || settings.emergencyReserveManualTarget === undefined
+      settings.emergencyReserveManualTarget === null ||
+      settings.emergencyReserveManualTarget === undefined
         ? null
-        : Number(settings.emergencyReserveManualTarget ?? settings.emergency_reserve_manual_target),
-    baseCurrency: settings.baseCurrency ?? settings.base_currency ?? DEFAULT_CASHFLOW_CURRENCY,
+        : Number(
+            settings.emergencyReserveManualTarget ??
+              settings.emergency_reserve_manual_target
+          ),
+    baseCurrency:
+      settings.baseCurrency ??
+      settings.base_currency ??
+      DEFAULT_CASHFLOW_CURRENCY,
     receivedIncomeLabel:
-      settings.receivedIncomeLabel ?? settings.received_income_label ?? "Получено доходов",
+      settings.receivedIncomeLabel ??
+      settings.received_income_label ??
+      "Получено доходов",
     budgetReservePriorityLabel:
       settings.budgetReservePriorityLabel ??
       settings.budget_reserve_priority_label ??
@@ -1073,49 +1310,59 @@ function normalizeCashflowSettings(settings) {
       settings.investmentsPriorityLabel ??
       settings.investments_priority_label ??
       "Можно направить в инвестиции и цели",
-  };
+  }
 }
 
 function normalizeCashflowState(state) {
-  const settings = normalizeCashflowSettings(state?.settings);
-  const funds = (state?.funds ?? createDefaultCashflowFunds(settings.baseCurrency))
+  const settings = normalizeCashflowSettings(state?.settings)
+  const funds = (
+    state?.funds ?? createDefaultCashflowFunds(settings.baseCurrency)
+  )
     .map(normalizeCashflowFund)
-    .filter(Boolean);
+    .filter(Boolean)
 
   cashflowSystemFundTypes.forEach((fundType) => {
     if (!funds.some((fund) => fund.fundType === fundType)) {
       funds.push(
         normalizeCashflowFund(
-          createDefaultCashflowFunds(settings.baseCurrency).find((fund) => fund.fundType === fundType),
-        ),
-      );
+          createDefaultCashflowFunds(settings.baseCurrency).find(
+            (fund) => fund.fundType === fundType
+          )
+        )
+      )
     }
-  });
+  })
 
   return {
-    accounts: (state?.accounts ?? []).map(normalizeCashflowAccount).filter(Boolean),
+    accounts: (state?.accounts ?? [])
+      .map(normalizeCashflowAccount)
+      .filter(Boolean),
     funds,
-    snapshots: (state?.snapshots ?? []).map(normalizeCashflowSnapshot).filter(Boolean),
-    incomeEvents: (state?.incomeEvents ?? []).map(normalizeCashflowIncomeEvent).filter(Boolean),
+    snapshots: (state?.snapshots ?? [])
+      .map(normalizeCashflowSnapshot)
+      .filter(Boolean),
+    incomeEvents: (state?.incomeEvents ?? [])
+      .map(normalizeCashflowIncomeEvent)
+      .filter(Boolean),
     settings,
-  };
+  }
 }
 
 function getInitialCashflowState() {
-  if (typeof window === "undefined" || isSupabaseConfigured) {
+  if (typeof window === "undefined" || shouldUseSupabaseStorage()) {
     return normalizeCashflowState({
       accounts: [],
       funds: createDefaultCashflowFunds(),
       snapshots: [],
       incomeEvents: [],
       settings: createDefaultCashflowSettings(),
-    });
+    })
   }
 
   try {
-    const saved = window.localStorage.getItem(CASHFLOW_STORAGE_KEY);
+    const saved = window.localStorage.getItem(CASHFLOW_STORAGE_KEY)
     if (saved) {
-      return normalizeCashflowState(JSON.parse(saved));
+      return normalizeCashflowState(JSON.parse(saved))
     }
   } catch {
     // ignore
@@ -1127,7 +1374,7 @@ function getInitialCashflowState() {
     snapshots: [],
     incomeEvents: [],
     settings: createDefaultCashflowSettings(),
-  });
+  })
 }
 
 function getAuthUserDisplayName(user) {
@@ -1136,494 +1383,27 @@ function getAuthUserDisplayName(user) {
     user?.user_metadata?.name ??
     user?.email?.split("@")[0] ??
     "Пользователь"
-  );
+  )
 }
 
 function getAuthUserAvatar(user) {
-  return user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture ?? "";
-}
-
-async function ensureHouseholdRecord(user) {
-  const supabase = requireSupabase();
-  const profilePayload = {
-    id: user.id,
-    email: user.email ?? "",
-    full_name: getAuthUserDisplayName(user),
-    avatar_url: getAuthUserAvatar(user) || null,
-    updated_at: new Date().toISOString(),
-  };
-
-  const { error: profileError } = await supabase
-    .from("user_profiles")
-    .upsert(profilePayload, { onConflict: "id" });
-
-  if (profileError) {
-    throw profileError;
-  }
-
-  const { data: memberships, error: membershipFetchError } = await supabase
-    .from("household_memberships")
-    .select("household_id, role, households!inner(id, name)")
-    .eq("user_id", user.id)
-    .limit(1);
-
-  if (membershipFetchError) {
-    throw membershipFetchError;
-  }
-
-  if (memberships?.length) {
-    return memberships[0].household_id;
-  }
-
-  const { data: ownedHouseholds, error: ownedHouseholdsError } = await supabase
-    .from("households")
-    .select("id, name")
-    .eq("owner_user_id", user.id)
-    .order("created_at", { ascending: false })
-    .limit(1);
-
-  if (ownedHouseholdsError) {
-    throw ownedHouseholdsError;
-  }
-
-  if (ownedHouseholds?.length) {
-    const householdId = ownedHouseholds[0].id;
-    const { error: ownedMembershipUpsertError } = await supabase
-      .from("household_memberships")
-      .upsert(
-        {
-          household_id: householdId,
-          user_id: user.id,
-          role: "owner",
-        },
-        { onConflict: "household_id,user_id" },
-      );
-
-    if (ownedMembershipUpsertError) {
-      throw ownedMembershipUpsertError;
-    }
-
-    return householdId;
-  }
-
-  const { data: insertedHousehold, error: householdInsertError } = await supabase
-    .from("households")
-    .insert({
-      name: DEFAULT_HOUSEHOLD_NAME,
-      currency_code: "CZK",
-      timezone: "Europe/Prague",
-      owner_user_id: user.id,
-    })
-    .select("id")
-    .single();
-
-  if (householdInsertError) {
-    throw householdInsertError;
-  }
-
-  const { error: membershipInsertError } = await supabase
-    .from("household_memberships")
-    .insert({
-      household_id: insertedHousehold.id,
-      user_id: user.id,
-      role: "owner",
-    });
-
-  if (membershipInsertError) {
-    throw membershipInsertError;
-  }
-
-  return insertedHousehold.id;
-}
-
-function getPrototypePeopleFromMembers(members) {
-  return members
-    .filter((member) => payerOptions.includes(member.name))
-    .sort((left, right) => payerOptions.indexOf(left.name) - payerOptions.indexOf(right.name))
-    .map((member, index) => ({
-      slug: member.id,
-      name: member.name,
-      emoji: member.emoji,
-      sort_order: index,
-    }));
-}
-
-async function persistBudgetSnapshotToSupabase({ householdId, members, categories, regularExpenses }) {
-  const supabase = requireSupabase();
-  const sanitizedRegularExpenses = dedupeRegularTemplates(
-    regularExpenses.filter(isValidRegularTemplate),
-  );
-
-  await supabase.from("expense_occurrences").delete().eq("household_id", householdId);
-  await supabase.from("expense_series").delete().eq("household_id", householdId);
-  await supabase.from("categories").delete().eq("household_id", householdId);
-  await supabase.from("people").delete().eq("household_id", householdId);
-
-  const peoplePayload = getPrototypePeopleFromMembers(members).map((person) => ({
-    household_id: householdId,
-    ...person,
-  }));
-
-  const { data: insertedPeople, error: peopleInsertError } = await supabase
-    .from("people")
-    .insert(peoplePayload)
-    .select("id, slug, name, emoji, sort_order");
-
-  if (peopleInsertError) {
-    throw peopleInsertError;
-  }
-
-  const personIdByName = new Map(insertedPeople.map((person) => [person.name, person.id]));
-
-  const categoriesPayload = categories.map((category, index) => ({
-    household_id: householdId,
-    label: category.label,
-    icon: category.icon,
-    color: category.color ?? getDefaultCategoryColor(category.icon, index),
-    sort_order: index,
-  }));
-
-  const { data: insertedCategories, error: categoriesInsertError } = await supabase
-    .from("categories")
-    .insert(categoriesPayload)
-    .select("id, label, icon, color, sort_order");
-
-  if (categoriesInsertError) {
-    throw categoriesInsertError;
-  }
-
-  const categoryIdByLabel = new Map(insertedCategories.map((category) => [category.label, category.id]));
-
-  if (sanitizedRegularExpenses.length) {
-    const seriesPayload = sanitizedRegularExpenses.map((template) => ({
-      household_id: householdId,
-      source_expense_client_id: template.sourceExpenseId ?? template.id,
-      is_active: template.isActive !== false,
-      stopped_from:
-        template.stoppedFromYear && template.stoppedFromMonth
-          ? buildSqlDate(template.stoppedFromYear, template.stoppedFromMonth)
-          : null,
-    }));
-
-    const { data: insertedSeries, error: seriesInsertError } = await supabase
-      .from("expense_series")
-      .insert(seriesPayload)
-      .select("id");
-
-    if (seriesInsertError) {
-      throw seriesInsertError;
-    }
-
-    const seriesIdByIndex = new Map(insertedSeries.map((series, index) => [index, series.id]));
-    const seriesIdBySourceExpenseId = new Map(
-      sanitizedRegularExpenses.map((template, index) => [template.sourceExpenseId ?? template.id, seriesIdByIndex.get(index)]),
-    );
-
-    const versionsPayload = sanitizedRegularExpenses.flatMap((template, index) => {
-      const seriesId = seriesIdByIndex.get(index);
-      const ownerName = normalizeOwnerName(template.owner, template.payer);
-      const payerName = normalizePayerName(template.payer);
-      const ownerPersonId = ownerName === "Общее" ? null : personIdByName.get(ownerName);
-      const payerPersonId = personIdByName.get(payerName);
-      const categoryId = categoryIdByLabel.get(template.category);
-
-      return (template.history ?? []).map((entry, historyIndex, historyEntries) => {
-        const previousAmount =
-          historyIndex > 0 ? historyEntries[historyIndex - 1].amount : entry.previousAmount ?? entry.amount;
-
-        return {
-          series_id: seriesId,
-          effective_from: buildSqlDate(entry.effectiveYear, entry.effectiveMonth),
-          title: template.title,
-          amount: entry.amount,
-          cadence: template.cadence,
-          frequency: uiFrequencyToDb(template.frequency),
-          day_of_month: Number(template.dayOfMonth),
-          month_of_year: template.frequency === "Раз в год" ? getMonthNumberFromValue(template.month) : null,
-          owner_scope: ownerName === "Общее" ? "household" : "person",
-          owner_person_id: ownerPersonId ?? null,
-          payer_person_id: payerPersonId,
-          category_id: categoryId,
-          previous_amount: previousAmount,
-        };
-      });
-    });
-
-    const { error: versionsInsertError } = await supabase
-      .from("expense_series_versions")
-      .insert(versionsPayload);
-
-    if (versionsInsertError) {
-      throw versionsInsertError;
-    }
-
-    const occurrenceRows = members.flatMap((member) =>
-      member.expenses.map((expense) => {
-        const frequency = expense.frequency ?? detectFrequency(expense);
-        const payer = normalizePayerName(getExpensePayer(expense));
-        const owner = normalizeOwnerName(getExpenseOwner(expense, member), payer);
-        const ownerPersonId = owner === "Общее" ? null : personIdByName.get(owner);
-        const payerPersonId = personIdByName.get(payer);
-        const categoryId = categoryIdByLabel.get(expense.category);
-        const dayOfMonth = Number(expense.dayOfMonth ?? getExpenseDayOfMonth(expense));
-        const occurrenceYear = expense.year ?? getCurrentMonthContext().year;
-        const occurrenceMonth = expense.month ?? getCurrentMonthContext().monthShort;
-
-        return {
-          household_id: householdId,
-          series_id:
-            seriesIdBySourceExpenseId.get(expense.sourceExpenseId ?? expense.templateId ?? expense.id) ??
-            null,
-          occurrence_month: buildSqlDate(occurrenceYear, occurrenceMonth),
-          due_on: buildSqlDate(occurrenceYear, occurrenceMonth, dayOfMonth),
-          title: expense.title,
-          amount: expense.amount,
-          cadence: expense.cadence,
-          frequency: uiFrequencyToDb(frequency),
-          owner_scope: owner === "Общее" ? "household" : "person",
-          owner_person_id: ownerPersonId ?? null,
-          payer_person_id: payerPersonId,
-          category_id: categoryId,
-          source_type:
-            seriesIdBySourceExpenseId.get(expense.sourceExpenseId ?? expense.templateId ?? expense.id)
-              ? "series"
-              : "manual",
-          status: expense.completed ? "completed" : "planned",
-          completed_at: expense.completed ? new Date().toISOString() : null,
-          note: null,
-        };
-      }),
-    );
-
-    if (occurrenceRows.length) {
-      const { error: occurrencesInsertError } = await supabase
-        .from("expense_occurrences")
-        .insert(occurrenceRows);
-
-      if (occurrencesInsertError) {
-        throw occurrencesInsertError;
-      }
-    }
-
-    return;
-  }
-
-  const occurrenceRows = members.flatMap((member) =>
-    member.expenses.map((expense) => {
-    const frequency = expense.frequency ?? detectFrequency(expense);
-      const payer = normalizePayerName(getExpensePayer(expense));
-      const owner = normalizeOwnerName(getExpenseOwner(expense, member), payer);
-      const ownerPersonId = owner === "Общее" ? null : personIdByName.get(owner);
-      const payerPersonId = personIdByName.get(payer);
-      const categoryId = categoryIdByLabel.get(expense.category);
-      const dayOfMonth = Number(expense.dayOfMonth ?? getExpenseDayOfMonth(expense));
-      const occurrenceYear = expense.year ?? getCurrentMonthContext().year;
-      const occurrenceMonth = expense.month ?? getCurrentMonthContext().monthShort;
-
-      return {
-        household_id: householdId,
-        series_id: null,
-        occurrence_month: buildSqlDate(occurrenceYear, occurrenceMonth),
-        due_on: buildSqlDate(occurrenceYear, occurrenceMonth, dayOfMonth),
-        title: expense.title,
-        amount: expense.amount,
-        cadence: expense.cadence,
-        frequency: uiFrequencyToDb(frequency),
-        owner_scope: owner === "Общее" ? "household" : "person",
-        owner_person_id: ownerPersonId ?? null,
-        payer_person_id: payerPersonId,
-        category_id: categoryId,
-        source_type: "manual",
-        status: expense.completed ? "completed" : "planned",
-        completed_at: expense.completed ? new Date().toISOString() : null,
-        note: null,
-      };
-    }),
-  );
-
-  if (occurrenceRows.length) {
-    const { error: occurrencesInsertError } = await supabase
-      .from("expense_occurrences")
-      .insert(occurrenceRows);
-
-    if (occurrencesInsertError) {
-      throw occurrencesInsertError;
-    }
-  }
-}
-
-async function loadBudgetSnapshotFromSupabase(householdId) {
-  const supabase = requireSupabase();
-  const [{ data: people, error: peopleError }, { data: categories, error: categoriesError }, { data: occurrences, error: occurrencesError }, { data: series, error: seriesError }, { data: seriesVersions, error: versionsError }] =
-    await Promise.all([
-      supabase.from("people").select("id, name, slug, emoji, sort_order").eq("household_id", householdId).order("sort_order", { ascending: true }),
-      supabase.from("categories").select("id, label, icon, color, sort_order").eq("household_id", householdId).order("sort_order", { ascending: true }),
-      supabase
-        .from("expense_occurrences")
-        .select("id, series_id, occurrence_month, due_on, title, amount, cadence, frequency, owner_scope, owner_person_id, payer_person_id, category_id, status")
-        .eq("household_id", householdId)
-        .order("due_on", { ascending: true }),
-      supabase
-        .from("expense_series")
-        .select("id, source_expense_client_id, is_active, stopped_from, created_at")
-        .eq("household_id", householdId)
-        .order("created_at", { ascending: true }),
-      supabase
-        .from("expense_series_versions")
-        .select("id, series_id, effective_from, title, amount, cadence, frequency, day_of_month, month_of_year, owner_scope, owner_person_id, payer_person_id, category_id, previous_amount, created_at")
-        .order("effective_from", { ascending: true }),
-    ]);
-
-  if (peopleError) throw peopleError;
-  if (categoriesError) throw categoriesError;
-  if (occurrencesError) throw occurrencesError;
-  if (seriesError) throw seriesError;
-  if (versionsError) throw versionsError;
-
-  const personById = new Map((people ?? []).map((person) => [person.id, person]));
-  const categoryById = new Map((categories ?? []).map((category) => [category.id, category]));
-
-  const loadedCategories = (categories ?? []).map((category) => ({
-    id: category.id,
-    label: category.label,
-    icon: category.icon,
-    color: category.color,
-  }));
-
-  const memberBase = [
-    { id: "common", name: "Общее", emoji: "🏡", budget: 0, expenses: [] },
-    ...(people ?? []).map((person) => ({
-      id: person.slug,
-      name: person.name,
-      emoji: person.emoji ?? "🙂",
-      budget: 0,
-      expenses: [],
-    })),
-  ];
-
-  const memberByName = new Map(memberBase.map((member) => [member.name, member]));
-  const sourceExpenseIdBySeriesId = new Map(
-    (series ?? []).map((entry) => [entry.id, entry.source_expense_client_id ?? entry.id]),
-  );
-
-  (occurrences ?? []).forEach((occurrence) => {
-    const dueOn = new Date(occurrence.due_on);
-    const ownerName =
-      occurrence.owner_scope === "household"
-        ? "Общее"
-        : personById.get(occurrence.owner_person_id)?.name ?? "Общее";
-    const payerName = personById.get(occurrence.payer_person_id)?.name ?? "Рома";
-    const category = categoryById.get(occurrence.category_id);
-    const member = memberByName.get(ownerName);
-
-    if (!member || !category) {
-      return;
-    }
-
-    member.expenses.push({
-      id: occurrence.id,
-      templateId: occurrence.series_id ? sourceExpenseIdBySeriesId.get(occurrence.series_id) ?? null : null,
-      sourceExpenseId: occurrence.series_id ? sourceExpenseIdBySeriesId.get(occurrence.series_id) ?? null : null,
-      title: occurrence.title,
-      category: category.label,
-      amount: Number(occurrence.amount),
-      dueLabel: buildDueLabel({
-        frequency: dbFrequencyToUi(occurrence.frequency),
-        dayOfMonth: String(dueOn.getUTCDate()),
-        month: getMonthShortByNumber(dueOn.getUTCMonth() + 1),
-        urgent: false,
-        completed: occurrence.status === "completed",
-      }),
-      cadence: occurrence.cadence,
-      completed: occurrence.status === "completed",
-      urgent: false,
-      owner: ownerName,
-      payer: payerName,
-      month: getMonthShortByNumber(dueOn.getUTCMonth() + 1),
-      year: dueOn.getUTCFullYear(),
-      frequency: dbFrequencyToUi(occurrence.frequency),
-      dayOfMonth: String(dueOn.getUTCDate()),
-    });
-  });
-
-  const versionsBySeriesId = new Map();
-  (seriesVersions ?? []).forEach((version) => {
-    if (!versionsBySeriesId.has(version.series_id)) {
-      versionsBySeriesId.set(version.series_id, []);
-    }
-
-    versionsBySeriesId.get(version.series_id).push(version);
-  });
-
-  const loadedRegularExpenses = dedupeRegularTemplates((series ?? []).flatMap((entry, index) => {
-    const versions = (versionsBySeriesId.get(entry.id) ?? []).sort(
-      (left, right) => new Date(left.effective_from).getTime() - new Date(right.effective_from).getTime(),
-    );
-    const latestVersion = versions[versions.length - 1];
-    if (!latestVersion) {
-      return [];
-    }
-    const category = categoryById.get(latestVersion?.category_id);
-    const ownerName =
-      latestVersion?.owner_scope === "household"
-        ? "Общее"
-        : personById.get(latestVersion?.owner_person_id)?.name ?? "Общее";
-    const payerName = personById.get(latestVersion?.payer_person_id)?.name ?? "Рома";
-
-    return {
-      id: entry.source_expense_client_id ?? entry.id,
-      sourceExpenseId: entry.source_expense_client_id ?? undefined,
-      title: latestVersion?.title ?? "Без названия",
-      category: category?.label ?? "",
-      cadence: latestVersion?.cadence ?? "manual",
-      frequency: dbFrequencyToUi(latestVersion?.frequency ?? "monthly"),
-      dayOfMonth: String(latestVersion?.day_of_month ?? 1),
-      month:
-        latestVersion?.frequency === "yearly"
-          ? getMonthShortByNumber(latestVersion.month_of_year ?? 1)
-          : getMonthShortByNumber(new Date(latestVersion?.effective_from ?? new Date()).getUTCMonth() + 1),
-      owner: ownerName,
-      payer: payerName,
-      isActive: entry.is_active,
-      stoppedFromYear: entry.stopped_from ? parseSqlDateParts(entry.stopped_from).year : null,
-      stoppedFromMonth: entry.stopped_from ? getMonthNameByNumber(parseSqlDateParts(entry.stopped_from).month) : null,
-      sortOrder: index,
-      history: versions.map((version, versionIndex) => {
-        const effectiveDate = new Date(version.effective_from);
-        return {
-          effectiveYear: effectiveDate.getUTCFullYear(),
-          effectiveMonth: getMonthNameByNumber(effectiveDate.getUTCMonth() + 1),
-          amount: Number(version.amount),
-          previousAmount:
-            versionIndex > 0
-              ? Number(versions[versionIndex - 1].amount)
-              : Number(version.previous_amount ?? version.amount),
-          changedAt: version.created_at,
-        };
-      }),
-    };
-  })
-    .filter(isValidRegularTemplate));
-
-  return {
-    members: memberBase,
-    categories: loadedCategories,
-    regularExpenses: loadedRegularExpenses,
-  };
+  return user?.user_metadata?.avatar_url ?? user?.user_metadata?.picture ?? ""
 }
 
 async function ensureCashflowDefaultsInSupabase(householdId) {
-  const supabase = requireSupabase();
+  const supabase = requireSupabase()
   const { data: existingFunds, error: existingFundsError } = await supabase
     .from("cashflow_funds")
     .select("id, fund_type")
-    .eq("household_id", householdId);
+    .eq("household_id", householdId)
 
   if (existingFundsError) {
-    throw existingFundsError;
+    throw existingFundsError
   }
 
-  const existingFundTypes = new Set((existingFunds ?? []).map((fund) => fund.fund_type));
+  const existingFundTypes = new Set(
+    (existingFunds ?? []).map((fund) => fund.fund_type)
+  )
   const defaultFunds = createDefaultCashflowFunds()
     .filter((fund) => !existingFundTypes.has(fund.fundType))
     .map((fund) => ({
@@ -1636,12 +1416,14 @@ async function ensureCashflowDefaultsInSupabase(householdId) {
       currency: fund.currency,
       is_system: fund.isSystem,
       is_active: fund.isActive,
-    }));
+    }))
 
   if (defaultFunds.length) {
-    const { error: insertFundsError } = await supabase.from("cashflow_funds").insert(defaultFunds);
+    const { error: insertFundsError } = await supabase
+      .from("cashflow_funds")
+      .insert(defaultFunds)
     if (insertFundsError) {
-      throw insertFundsError;
+      throw insertFundsError
     }
   }
 
@@ -1649,37 +1431,42 @@ async function ensureCashflowDefaultsInSupabase(householdId) {
     .from("cashflow_settings")
     .select("id")
     .eq("household_id", householdId)
-    .maybeSingle();
+    .maybeSingle()
 
   if (settingsError) {
-    throw settingsError;
+    throw settingsError
   }
 
   if (!existingSettings) {
-    const settings = createDefaultCashflowSettings();
-    const { error: insertSettingsError } = await supabase.from("cashflow_settings").insert({
-      household_id: householdId,
-      budget_reserve_months_multiplier: settings.budgetReserveMonthsMultiplier,
-      emergency_reserve_months_multiplier: settings.emergencyReserveMonthsMultiplier,
-      mandatory_budget_average_months: settings.mandatoryBudgetAverageMonths,
-      budget_reserve_manual_target: settings.budgetReserveManualTarget,
-      emergency_reserve_manual_target: settings.emergencyReserveManualTarget,
-      base_currency: settings.baseCurrency,
-      received_income_label: settings.receivedIncomeLabel,
-      budget_reserve_priority_label: settings.budgetReservePriorityLabel,
-      emergency_reserve_priority_label: settings.emergencyReservePriorityLabel,
-      investments_priority_label: settings.investmentsPriorityLabel,
-    });
+    const settings = createDefaultCashflowSettings()
+    const { error: insertSettingsError } = await supabase
+      .from("cashflow_settings")
+      .insert({
+        household_id: householdId,
+        budget_reserve_months_multiplier:
+          settings.budgetReserveMonthsMultiplier,
+        emergency_reserve_months_multiplier:
+          settings.emergencyReserveMonthsMultiplier,
+        mandatory_budget_average_months: settings.mandatoryBudgetAverageMonths,
+        budget_reserve_manual_target: settings.budgetReserveManualTarget,
+        emergency_reserve_manual_target: settings.emergencyReserveManualTarget,
+        base_currency: settings.baseCurrency,
+        received_income_label: settings.receivedIncomeLabel,
+        budget_reserve_priority_label: settings.budgetReservePriorityLabel,
+        emergency_reserve_priority_label:
+          settings.emergencyReservePriorityLabel,
+        investments_priority_label: settings.investmentsPriorityLabel,
+      })
 
     if (insertSettingsError) {
-      throw insertSettingsError;
+      throw insertSettingsError
     }
   }
 }
 
 async function loadCashflowStateFromSupabase(householdId) {
-  const supabase = requireSupabase();
-  await ensureCashflowDefaultsInSupabase(householdId);
+  const supabase = requireSupabase()
+  await ensureCashflowDefaultsInSupabase(householdId)
 
   const [
     { data: accounts, error: accountsError },
@@ -1688,8 +1475,16 @@ async function loadCashflowStateFromSupabase(householdId) {
     { data: incomeEvents, error: incomeEventsError },
     { data: settings, error: settingsError },
   ] = await Promise.all([
-    supabase.from("cashflow_accounts").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
-    supabase.from("cashflow_funds").select("*").eq("household_id", householdId).order("created_at", { ascending: true }),
+    supabase
+      .from("cashflow_accounts")
+      .select("*")
+      .eq("household_id", householdId)
+      .order("created_at", { ascending: true }),
+    supabase
+      .from("cashflow_funds")
+      .select("*")
+      .eq("household_id", householdId)
+      .order("created_at", { ascending: true }),
     supabase
       .from("cashflow_balance_snapshots")
       .select("*")
@@ -1702,14 +1497,18 @@ async function loadCashflowStateFromSupabase(householdId) {
       .eq("household_id", householdId)
       .order("income_date", { ascending: false })
       .order("created_at", { ascending: false }),
-    supabase.from("cashflow_settings").select("*").eq("household_id", householdId).maybeSingle(),
-  ]);
+    supabase
+      .from("cashflow_settings")
+      .select("*")
+      .eq("household_id", householdId)
+      .maybeSingle(),
+  ])
 
-  if (accountsError) throw accountsError;
-  if (fundsError) throw fundsError;
-  if (snapshotsError) throw snapshotsError;
-  if (incomeEventsError) throw incomeEventsError;
-  if (settingsError) throw settingsError;
+  if (accountsError) throw accountsError
+  if (fundsError) throw fundsError
+  if (snapshotsError) throw snapshotsError
+  if (incomeEventsError) throw incomeEventsError
+  if (settingsError) throw settingsError
 
   return normalizeCashflowState({
     accounts,
@@ -1717,53 +1516,69 @@ async function loadCashflowStateFromSupabase(householdId) {
     snapshots,
     incomeEvents,
     settings,
-  });
+  })
 }
 
-async function saveCashflowSettingsToSupabase({ householdId, settings, funds }) {
-  const supabase = requireSupabase();
-  const normalizedSettings = normalizeCashflowSettings(settings);
+async function saveCashflowSettingsToSupabase({
+  householdId,
+  settings,
+  funds,
+}) {
+  const supabase = requireSupabase()
+  const normalizedSettings = normalizeCashflowSettings(settings)
 
-  const { error: settingsError } = await supabase.from("cashflow_settings").upsert(
-    {
-      household_id: householdId,
-      budget_reserve_months_multiplier: normalizedSettings.budgetReserveMonthsMultiplier,
-      emergency_reserve_months_multiplier: normalizedSettings.emergencyReserveMonthsMultiplier,
-      mandatory_budget_average_months: normalizedSettings.mandatoryBudgetAverageMonths,
-      budget_reserve_manual_target: normalizedSettings.budgetReserveManualTarget,
-      emergency_reserve_manual_target: normalizedSettings.emergencyReserveManualTarget,
-      base_currency: normalizedSettings.baseCurrency,
-      received_income_label: normalizedSettings.receivedIncomeLabel,
-      budget_reserve_priority_label: normalizedSettings.budgetReservePriorityLabel,
-      emergency_reserve_priority_label: normalizedSettings.emergencyReservePriorityLabel,
-      investments_priority_label: normalizedSettings.investmentsPriorityLabel,
-    },
-    { onConflict: "household_id" },
-  );
+  const { error: settingsError } = await supabase
+    .from("cashflow_settings")
+    .upsert(
+      {
+        household_id: householdId,
+        budget_reserve_months_multiplier:
+          normalizedSettings.budgetReserveMonthsMultiplier,
+        emergency_reserve_months_multiplier:
+          normalizedSettings.emergencyReserveMonthsMultiplier,
+        mandatory_budget_average_months:
+          normalizedSettings.mandatoryBudgetAverageMonths,
+        budget_reserve_manual_target:
+          normalizedSettings.budgetReserveManualTarget,
+        emergency_reserve_manual_target:
+          normalizedSettings.emergencyReserveManualTarget,
+        base_currency: normalizedSettings.baseCurrency,
+        received_income_label: normalizedSettings.receivedIncomeLabel,
+        budget_reserve_priority_label:
+          normalizedSettings.budgetReservePriorityLabel,
+        emergency_reserve_priority_label:
+          normalizedSettings.emergencyReservePriorityLabel,
+        investments_priority_label: normalizedSettings.investmentsPriorityLabel,
+      },
+      { onConflict: "household_id" }
+    )
 
   if (settingsError) {
-    throw settingsError;
+    throw settingsError
   }
 
   for (const fund of funds) {
-    const { error: fundError } = await supabase.from("cashflow_funds").update({
-      target_mode: fund.targetMode,
-      target_multiplier: fund.targetMultiplier,
-      manual_target_amount: fund.manualTargetAmount,
-      currency: fund.currency,
-      is_active: fund.isActive,
-      name: fund.name,
-    }).eq("id", fund.id);
+    const { error: fundError } = await supabase
+      .from("cashflow_funds")
+      .update({
+        target_mode: fund.targetMode,
+        target_multiplier: fund.targetMultiplier,
+        manual_target_amount: fund.manualTargetAmount,
+        currency: fund.currency,
+        is_active: fund.isActive,
+        name: fund.name,
+      })
+      .eq("id", fund.id)
 
     if (fundError) {
-      throw fundError;
+      throw fundError
     }
   }
 }
 
 async function saveCashflowIncomeEventToSupabase({ householdId, event }) {
-  const supabase = requireSupabase();
-  const normalizedEvent = normalizeCashflowIncomeEvent(event);
+  const supabase = requireSupabase()
+  const normalizedEvent = normalizeCashflowIncomeEvent(event)
 
   const payload = {
     household_id: householdId,
@@ -1777,41 +1592,55 @@ async function saveCashflowIncomeEventToSupabase({ householdId, event }) {
     amount_czk: normalizedEvent.amountCzk,
     exchange_rate_to_czk: normalizedEvent.exchangeRateToCzk,
     note: normalizedEvent.note,
-  };
+  }
 
-  if (normalizedEvent.id && !String(normalizedEvent.id).startsWith("cashflow-income-")) {
-    const { error } = await supabase.from("cashflow_income_events").update(payload).eq("id", normalizedEvent.id);
+  if (
+    normalizedEvent.id &&
+    !String(normalizedEvent.id).startsWith("cashflow-income-")
+  ) {
+    const { error } = await supabase
+      .from("cashflow_income_events")
+      .update(payload)
+      .eq("id", normalizedEvent.id)
     if (error) {
-      throw error;
+      throw error
     }
 
-    return normalizedEvent.id;
+    return normalizedEvent.id
   }
 
   const { data, error } = await supabase
     .from("cashflow_income_events")
     .insert(payload)
     .select("id")
-    .single();
+    .single()
 
   if (error) {
-    throw error;
+    throw error
   }
 
-  return data.id;
+  return data.id
 }
 
 async function deleteCashflowIncomeEventFromSupabase(incomeEventId) {
-  const supabase = requireSupabase();
-  const { error } = await supabase.from("cashflow_income_events").delete().eq("id", incomeEventId);
+  const supabase = requireSupabase()
+  const { error } = await supabase
+    .from("cashflow_income_events")
+    .delete()
+    .eq("id", incomeEventId)
   if (error) {
-    throw error;
+    throw error
   }
 }
 
-async function saveCashflowSnapshotToSupabase({ householdId, snapshot, accountDraft, existingAccounts }) {
-  const supabase = requireSupabase();
-  let accountId = snapshot.accountId;
+async function saveCashflowSnapshotToSupabase({
+  householdId,
+  snapshot,
+  accountDraft,
+  existingAccounts,
+}) {
+  const supabase = requireSupabase()
+  let accountId = snapshot.accountId
 
   if (accountDraft?.name?.trim()) {
     const payload = {
@@ -1821,28 +1650,30 @@ async function saveCashflowSnapshotToSupabase({ householdId, snapshot, accountDr
       account_type: accountDraft.accountType,
       default_currency: accountDraft.defaultCurrency,
       is_active: true,
-    };
+    }
 
     if (!accountId) {
       const { data, error } = await supabase
         .from("cashflow_accounts")
         .insert(payload)
         .select("id")
-        .single();
+        .single()
 
       if (error) {
-        throw error;
+        throw error
       }
 
-      accountId = data.id;
+      accountId = data.id
     } else {
-      const existingAccount = existingAccounts.find((account) => account.id === accountId);
+      const existingAccount = existingAccounts.find(
+        (account) => account.id === accountId
+      )
       const needsAccountUpdate =
         !existingAccount ||
         existingAccount.name !== accountDraft.name.trim() ||
         existingAccount.owner !== accountDraft.owner ||
         existingAccount.accountType !== accountDraft.accountType ||
-        existingAccount.defaultCurrency !== accountDraft.defaultCurrency;
+        existingAccount.defaultCurrency !== accountDraft.defaultCurrency
 
       if (needsAccountUpdate) {
         const { error } = await supabase
@@ -1853,16 +1684,19 @@ async function saveCashflowSnapshotToSupabase({ householdId, snapshot, accountDr
             account_type: accountDraft.accountType,
             default_currency: accountDraft.defaultCurrency,
           })
-          .eq("id", accountId);
+          .eq("id", accountId)
 
         if (error) {
-          throw error;
+          throw error
         }
       }
     }
   }
 
-  const normalizedSnapshot = normalizeCashflowSnapshot({ ...snapshot, accountId });
+  const normalizedSnapshot = normalizeCashflowSnapshot({
+    ...snapshot,
+    accountId,
+  })
   const payload = {
     household_id: householdId,
     account_id: normalizedSnapshot.accountId,
@@ -1874,45 +1708,51 @@ async function saveCashflowSnapshotToSupabase({ householdId, snapshot, accountDr
     exchange_rate_to_czk: normalizedSnapshot.exchangeRateToCzk,
     asset_type: normalizedSnapshot.assetType,
     owner: normalizedSnapshot.owner,
-  };
+  }
 
-  if (normalizedSnapshot.id && !String(normalizedSnapshot.id).startsWith("cashflow-snapshot-")) {
+  if (
+    normalizedSnapshot.id &&
+    !String(normalizedSnapshot.id).startsWith("cashflow-snapshot-")
+  ) {
     const { error } = await supabase
       .from("cashflow_balance_snapshots")
       .update(payload)
-      .eq("id", normalizedSnapshot.id);
+      .eq("id", normalizedSnapshot.id)
 
     if (error) {
-      throw error;
+      throw error
     }
 
-    return { snapshotId: normalizedSnapshot.id, accountId };
+    return { snapshotId: normalizedSnapshot.id, accountId }
   }
 
   const { data, error } = await supabase
     .from("cashflow_balance_snapshots")
     .insert(payload)
     .select("id")
-    .single();
+    .single()
 
   if (error) {
-    throw error;
+    throw error
   }
 
-  return { snapshotId: data.id, accountId };
+  return { snapshotId: data.id, accountId }
 }
 
 async function deleteCashflowSnapshotFromSupabase(snapshotId) {
-  const supabase = requireSupabase();
-  const { error } = await supabase.from("cashflow_balance_snapshots").delete().eq("id", snapshotId);
+  const supabase = requireSupabase()
+  const { error } = await supabase
+    .from("cashflow_balance_snapshots")
+    .delete()
+    .eq("id", snapshotId)
   if (error) {
-    throw error;
+    throw error
   }
 }
 
 async function saveCashflowAccountToSupabase({ householdId, account }) {
-  const supabase = requireSupabase();
-  const normalizedAccount = normalizeCashflowAccount(account);
+  const supabase = requireSupabase()
+  const normalizedAccount = normalizeCashflowAccount(account)
   const payload = {
     household_id: householdId,
     name: normalizedAccount.name,
@@ -1920,34 +1760,47 @@ async function saveCashflowAccountToSupabase({ householdId, account }) {
     account_type: normalizedAccount.accountType,
     default_currency: normalizedAccount.defaultCurrency,
     is_active: normalizedAccount.isActive,
-  };
+  }
 
-  if (normalizedAccount.id && !String(normalizedAccount.id).startsWith("cashflow-account-")) {
-    const { error } = await supabase.from("cashflow_accounts").update(payload).eq("id", normalizedAccount.id);
+  if (
+    normalizedAccount.id &&
+    !String(normalizedAccount.id).startsWith("cashflow-account-")
+  ) {
+    const { error } = await supabase
+      .from("cashflow_accounts")
+      .update(payload)
+      .eq("id", normalizedAccount.id)
     if (error) {
-      throw error;
+      throw error
     }
-    return normalizedAccount.id;
+    return normalizedAccount.id
   }
 
-  const { data, error } = await supabase.from("cashflow_accounts").insert(payload).select("id").single();
+  const { data, error } = await supabase
+    .from("cashflow_accounts")
+    .insert(payload)
+    .select("id")
+    .single()
   if (error) {
-    throw error;
+    throw error
   }
-  return data.id;
+  return data.id
 }
 
 async function deleteCashflowAccountFromSupabase(accountId) {
-  const supabase = requireSupabase();
-  const { error } = await supabase.from("cashflow_accounts").delete().eq("id", accountId);
+  const supabase = requireSupabase()
+  const { error } = await supabase
+    .from("cashflow_accounts")
+    .delete()
+    .eq("id", accountId)
   if (error) {
-    throw error;
+    throw error
   }
 }
 
 async function saveCashflowFundToSupabase({ householdId, fund }) {
-  const supabase = requireSupabase();
-  const normalizedFund = normalizeCashflowFund(fund);
+  const supabase = requireSupabase()
+  const normalizedFund = normalizeCashflowFund(fund)
   const payload = {
     household_id: householdId,
     name: normalizedFund.name,
@@ -1958,182 +1811,234 @@ async function saveCashflowFundToSupabase({ householdId, fund }) {
     currency: normalizedFund.currency,
     is_system: normalizedFund.isSystem,
     is_active: normalizedFund.isActive,
-  };
+  }
 
-  if (normalizedFund.id && !String(normalizedFund.id).startsWith("cashflow-fund-")) {
-    const { error } = await supabase.from("cashflow_funds").update(payload).eq("id", normalizedFund.id);
+  if (
+    normalizedFund.id &&
+    !String(normalizedFund.id).startsWith("cashflow-fund-")
+  ) {
+    const { error } = await supabase
+      .from("cashflow_funds")
+      .update(payload)
+      .eq("id", normalizedFund.id)
     if (error) {
-      throw error;
+      throw error
     }
-    return normalizedFund.id;
+    return normalizedFund.id
   }
 
-  const { data, error } = await supabase.from("cashflow_funds").insert(payload).select("id").single();
+  const { data, error } = await supabase
+    .from("cashflow_funds")
+    .insert(payload)
+    .select("id")
+    .single()
   if (error) {
-    throw error;
+    throw error
   }
-  return data.id;
+  return data.id
 }
 
 async function deleteCashflowFundFromSupabase(fundId) {
-  const supabase = requireSupabase();
-  const { error } = await supabase.from("cashflow_funds").delete().eq("id", fundId);
+  const supabase = requireSupabase()
+  const { error } = await supabase
+    .from("cashflow_funds")
+    .delete()
+    .eq("id", fundId)
   if (error) {
-    throw error;
+    throw error
   }
 }
 
 function getRegularAmountForPeriod(template, year, monthValue) {
-  const targetOrder = getPeriodOrderKey(year, monthValue);
+  const targetOrder = getPeriodOrderKey(year, monthValue)
   const sortedHistory = [...(template.history ?? [])].sort(
     (left, right) =>
       getPeriodOrderKey(left.effectiveYear, left.effectiveMonth) -
-      getPeriodOrderKey(right.effectiveYear, right.effectiveMonth),
-  );
+      getPeriodOrderKey(right.effectiveYear, right.effectiveMonth)
+  )
 
   const firstHistoryOrder = sortedHistory[0]
-    ? getPeriodOrderKey(sortedHistory[0].effectiveYear, sortedHistory[0].effectiveMonth)
-    : null;
+    ? getPeriodOrderKey(
+        sortedHistory[0].effectiveYear,
+        sortedHistory[0].effectiveMonth
+      )
+    : null
 
   if (firstHistoryOrder === null || targetOrder < firstHistoryOrder) {
-    return 0;
+    return 0
   }
 
-  let activeAmount = sortedHistory[0]?.amount ?? 0;
+  let activeAmount = sortedHistory[0]?.amount ?? 0
 
   sortedHistory.forEach((entry) => {
-    if (getPeriodOrderKey(entry.effectiveYear, entry.effectiveMonth) <= targetOrder) {
-      activeAmount = entry.amount;
+    if (
+      getPeriodOrderKey(entry.effectiveYear, entry.effectiveMonth) <=
+      targetOrder
+    ) {
+      activeAmount = entry.amount
     }
-  });
+  })
 
-  return activeAmount;
+  return activeAmount
 }
 
 function getRegularHistoryEntryForPeriod(template, year, monthValue) {
   return (template.history ?? []).find(
     (entry) =>
-      entry.effectiveYear === year && normalizeMonthName(entry.effectiveMonth) === normalizeMonthName(monthValue),
-  );
+      entry.effectiveYear === year &&
+      normalizeMonthName(entry.effectiveMonth) ===
+        normalizeMonthName(monthValue)
+  )
 }
 
 function getRegularStopContext(template) {
   if (!template?.stoppedFromYear || !template?.stoppedFromMonth) {
-    return null;
+    return null
   }
 
-  return buildMonthContext(template.stoppedFromYear, template.stoppedFromMonth);
+  return buildMonthContext(template.stoppedFromYear, template.stoppedFromMonth)
 }
 
 function getRegularStopOrder(template) {
-  const stopContext = getRegularStopContext(template);
-  return stopContext ? getPeriodOrderKey(stopContext.year, stopContext.monthName) : null;
+  const stopContext = getRegularStopContext(template)
+  return stopContext
+    ? getPeriodOrderKey(stopContext.year, stopContext.monthName)
+    : null
 }
 
 function isRegularTemplateScheduledToStop(template) {
-  return Boolean(getRegularStopContext(template));
+  return Boolean(getRegularStopContext(template))
 }
 
 function getRegularStopNote(template, currentContext) {
-  const stopContext = getRegularStopContext(template);
+  const stopContext = getRegularStopContext(template)
   if (!stopContext) {
-    return null;
+    return null
   }
 
-  const stopOrder = getPeriodOrderKey(stopContext.year, stopContext.monthName);
-  const currentOrder = getPeriodOrderKey(currentContext.year, currentContext.monthName);
+  const stopOrder = getPeriodOrderKey(stopContext.year, stopContext.monthName)
+  const currentOrder = getPeriodOrderKey(
+    currentContext.year,
+    currentContext.monthName
+  )
 
   return stopOrder > currentOrder
     ? `Остановится с ${formatMonthYearGenitive(stopContext.monthName, stopContext.year)}`
-    : `Остановлена с ${formatMonthYearGenitive(stopContext.monthName, stopContext.year)}`;
+    : `Остановлена с ${formatMonthYearGenitive(stopContext.monthName, stopContext.year)}`
 }
 
 function getUpcomingRegularChange(template, currentContext) {
-  const currentOrder = getPeriodOrderKey(currentContext.year, currentContext.monthName);
+  const currentOrder = getPeriodOrderKey(
+    currentContext.year,
+    currentContext.monthName
+  )
 
-  return [...(template.history ?? [])]
-    .filter((entry) => getPeriodOrderKey(entry.effectiveYear, entry.effectiveMonth) > currentOrder)
-    .sort(
-      (left, right) =>
-        getPeriodOrderKey(left.effectiveYear, left.effectiveMonth) -
-        getPeriodOrderKey(right.effectiveYear, right.effectiveMonth),
-    )[0] ?? null;
+  return (
+    [...(template.history ?? [])]
+      .filter(
+        (entry) =>
+          getPeriodOrderKey(entry.effectiveYear, entry.effectiveMonth) >
+          currentOrder
+      )
+      .sort(
+        (left, right) =>
+          getPeriodOrderKey(left.effectiveYear, left.effectiveMonth) -
+          getPeriodOrderKey(right.effectiveYear, right.effectiveMonth)
+      )[0] ?? null
+  )
 }
 
 function doesRegularTemplateApplyToMonth(template, monthContext) {
   if (template.isActive === false) {
-    return false;
+    return false
   }
 
   const firstHistory = [...(template.history ?? [])].sort(
     (left, right) =>
       getPeriodOrderKey(left.effectiveYear, left.effectiveMonth) -
-      getPeriodOrderKey(right.effectiveYear, right.effectiveMonth),
-  )[0];
+      getPeriodOrderKey(right.effectiveYear, right.effectiveMonth)
+  )[0]
   const startOrder = firstHistory
     ? getPeriodOrderKey(firstHistory.effectiveYear, firstHistory.effectiveMonth)
-    : null;
-  const targetOrder = getPeriodOrderKey(monthContext.year, monthContext.monthName);
+    : null
+  const targetOrder = getPeriodOrderKey(
+    monthContext.year,
+    monthContext.monthName
+  )
 
   if (startOrder !== null && targetOrder < startOrder) {
-    return false;
+    return false
   }
 
-  const stopOrder = getRegularStopOrder(template);
+  const stopOrder = getRegularStopOrder(template)
   if (stopOrder !== null && targetOrder >= stopOrder) {
-    return false;
+    return false
   }
 
   if (template.frequency === "Раз в год") {
-    return normalizeMonthName(template.month) === monthContext.monthName;
+    return normalizeMonthName(template.month) === monthContext.monthName
   }
 
-  return true;
+  return true
 }
 
-function getInitialRegularEffectiveContext({ seedYear, seedMonthName, dayOfMonth, frequency }) {
-  const seedContext = buildMonthContext(seedYear, seedMonthName);
-  const currentContext = getCurrentMonthContext();
-  const normalizedDay = Number(dayOfMonth || 1);
-  const today = new Date();
-  const todayDay = today.getDate();
+function getInitialRegularEffectiveContext({
+  seedYear,
+  seedMonthName,
+  dayOfMonth,
+  frequency,
+}) {
+  const seedContext = buildMonthContext(seedYear, seedMonthName)
+  const currentContext = getCurrentMonthContext()
+  const normalizedDay = Number(dayOfMonth || 1)
+  const today = new Date()
+  const todayDay = today.getDate()
   const isCurrentMonthSeed =
-    seedContext.year === currentContext.year && seedContext.monthName === currentContext.monthName;
+    seedContext.year === currentContext.year &&
+    seedContext.monthName === currentContext.monthName
 
   if (!isCurrentMonthSeed) {
-    return seedContext;
+    return seedContext
   }
 
   if (frequency === "Каждый месяц" && normalizedDay < todayDay) {
-    return getNextMonthContext(seedContext);
+    return getNextMonthContext(seedContext)
   }
 
   if (frequency === "Раз в год" && normalizedDay < todayDay) {
-    return buildMonthContext(seedContext.year + 1, seedContext.monthName);
+    return buildMonthContext(seedContext.year + 1, seedContext.monthName)
   }
 
-  return seedContext;
+  return seedContext
 }
 
 function buildRegularDueLabel(template, monthContext) {
-  const dayPart = `Оплата ${template.dayOfMonth} числа`;
+  const dayPart = `Оплата ${template.dayOfMonth} числа`
 
   if (template.frequency === "Раз в год") {
-    return `Раз в год - ${monthContext.monthShort}, ${dayPart}`;
+    return `Раз в год - ${monthContext.monthShort}, ${dayPart}`
   }
 
-  return dayPart;
+  return dayPart
 }
 
 function buildProjectedExpenseFromTemplate(template, monthContext) {
-  const amount = getRegularAmountForPeriod(template, monthContext.year, monthContext.monthName);
-  const effectiveChange = getRegularHistoryEntryForPeriod(template, monthContext.year, monthContext.monthName);
+  const amount = getRegularAmountForPeriod(
+    template,
+    monthContext.year,
+    monthContext.monthName
+  )
+  const effectiveChange = getRegularHistoryEntryForPeriod(
+    template,
+    monthContext.year,
+    monthContext.monthName
+  )
   const changeNote =
     effectiveChange && effectiveChange.previousAmount !== effectiveChange.amount
       ? `Изменение с ${formatMonthYearGenitive(monthContext.monthName, monthContext.year)}: было ${formatCurrency(
-          effectiveChange.previousAmount,
+          effectiveChange.previousAmount
         )} Kč`
-      : null;
+      : null
 
   return {
     id: `projected-${template.id}-${monthContext.year}-${monthContext.monthIndex}`,
@@ -2156,15 +2061,17 @@ function buildProjectedExpenseFromTemplate(template, monthContext) {
     month: monthContext.monthShort,
     year: monthContext.year,
     effectiveNote: changeNote,
-  };
+  }
 }
 
 function getMemberExpensesForMonth(members, monthContext) {
   return members.flatMap((member) =>
     member.expenses
-      .filter((expense) => isExpenseInPeriod(expense, monthContext.year, monthContext.monthName))
-      .map((expense) => ({ ...expense, sourceMember: member })),
-  );
+      .filter((expense) =>
+        isExpenseInPeriod(expense, monthContext.year, monthContext.monthName)
+      )
+      .map((expense) => ({ ...expense, sourceMember: member }))
+  )
 }
 
 function buildRegularIdentityKey({
@@ -2176,23 +2083,35 @@ function buildRegularIdentityKey({
   dayOfMonth,
   month,
 }) {
-  const normalizedFrequency = frequency === "Раз в год" ? "yearly" : "monthly";
+  const normalizedFrequency = frequency === "Раз в год" ? "yearly" : "monthly"
 
   return [
-    String(title ?? "").trim().toLowerCase(),
-    String(category ?? "").trim().toLowerCase(),
-    String(normalizeOwnerName(owner, payer) ?? "").trim().toLowerCase(),
-    String(normalizePayerName(payer) ?? "").trim().toLowerCase(),
+    String(title ?? "")
+      .trim()
+      .toLowerCase(),
+    String(category ?? "")
+      .trim()
+      .toLowerCase(),
+    String(normalizeOwnerName(owner, payer) ?? "")
+      .trim()
+      .toLowerCase(),
+    String(normalizePayerName(payer) ?? "")
+      .trim()
+      .toLowerCase(),
     normalizedFrequency,
     String(dayOfMonth ?? ""),
     normalizedFrequency === "yearly" ? normalizeMonthName(month) : "",
-  ].join("|");
+  ].join("|")
 }
 
 function getExpenseRegularIdentityKey(expense) {
-  const frequency = expense.frequency ?? detectFrequency(expense);
-  if (frequency !== "Каждый месяц" && frequency !== "Раз в год" && !expense.templateId) {
-    return null;
+  const frequency = expense.frequency ?? detectFrequency(expense)
+  if (
+    frequency !== "Каждый месяц" &&
+    frequency !== "Раз в год" &&
+    !expense.templateId
+  ) {
+    return null
   }
 
   return buildRegularIdentityKey({
@@ -2203,7 +2122,7 @@ function getExpenseRegularIdentityKey(expense) {
     frequency,
     dayOfMonth: getExpenseDayOfMonth(expense),
     month: expense.month,
-  });
+  })
 }
 
 function getTemplateRegularIdentityKey(template) {
@@ -2215,7 +2134,7 @@ function getTemplateRegularIdentityKey(template) {
     frequency: template.frequency,
     dayOfMonth: template.dayOfMonth,
     month: template.month,
-  });
+  })
 }
 
 function buildProjectedTemplateMatchKey({
@@ -2228,14 +2147,22 @@ function buildProjectedTemplateMatchKey({
   amount,
 }) {
   return [
-    String(title ?? "").trim().toLowerCase(),
-    String(category ?? "").trim().toLowerCase(),
-    String(normalizeOwnerName(owner, payer) ?? "").trim().toLowerCase(),
-    String(normalizePayerName(payer) ?? "").trim().toLowerCase(),
+    String(title ?? "")
+      .trim()
+      .toLowerCase(),
+    String(category ?? "")
+      .trim()
+      .toLowerCase(),
+    String(normalizeOwnerName(owner, payer) ?? "")
+      .trim()
+      .toLowerCase(),
+    String(normalizePayerName(payer) ?? "")
+      .trim()
+      .toLowerCase(),
     String(dayOfMonth ?? ""),
     normalizeMonthName(month),
     String(Number(amount ?? 0)),
-  ].join("|");
+  ].join("|")
 }
 
 function getExpenseProjectedTemplateMatchKey(expense) {
@@ -2247,7 +2174,7 @@ function getExpenseProjectedTemplateMatchKey(expense) {
     dayOfMonth: getExpenseDayOfMonth(expense),
     month: expense.month,
     amount: expense.amount,
-  });
+  })
 }
 
 function getTemplateProjectedMatchKey(template, monthContext) {
@@ -2258,294 +2185,385 @@ function getTemplateProjectedMatchKey(template, monthContext) {
     payer: template.payer,
     dayOfMonth: template.dayOfMonth,
     month: monthContext.monthShort,
-    amount: getRegularAmountForPeriod(template, monthContext.year, monthContext.monthName),
-  });
+    amount: getRegularAmountForPeriod(
+      template,
+      monthContext.year,
+      monthContext.monthName
+    ),
+  })
 }
 
-function getProjectedRegularExpensesForMonth({ regularExpenses, monthContext, actualExpenses = [] }) {
+function getProjectedRegularExpensesForMonth({
+  regularExpenses,
+  monthContext,
+  actualExpenses = [],
+}) {
   const explicitRegularSourceIds = new Set(
     actualExpenses
       .filter((expense) => {
-        const frequency = expense.frequency ?? detectFrequency(expense);
-        return frequency === "Каждый месяц" || frequency === "Раз в год" || Boolean(expense.templateId) || Boolean(expense.sourceExpenseId);
+        const frequency = expense.frequency ?? detectFrequency(expense)
+        return (
+          frequency === "Каждый месяц" ||
+          frequency === "Раз в год" ||
+          Boolean(expense.templateId) ||
+          Boolean(expense.sourceExpenseId)
+        )
       })
-      .flatMap((expense) => [expense.id, expense.sourceExpenseId].filter(Boolean)),
-  );
+      .flatMap((expense) =>
+        [expense.id, expense.sourceExpenseId].filter(Boolean)
+      )
+  )
   const explicitRegularTemplateIds = new Set(
-    actualExpenses
-      .map((expense) => expense.templateId)
-      .filter(Boolean),
-  );
+    actualExpenses.map((expense) => expense.templateId).filter(Boolean)
+  )
   const explicitRegularIdentityKeys = new Set(
     actualExpenses
       .map((expense) => getExpenseRegularIdentityKey(expense))
-      .filter(Boolean),
-  );
+      .filter(Boolean)
+  )
   const explicitProjectedMatchKeys = new Set(
     actualExpenses
       .map((expense) => getExpenseProjectedTemplateMatchKey(expense))
-      .filter(Boolean),
-  );
+      .filter(Boolean)
+  )
 
   return regularExpenses
-    .filter((template) => doesRegularTemplateApplyToMonth(template, monthContext))
-    .filter((template) => !explicitRegularSourceIds.has(template.sourceExpenseId))
+    .filter((template) =>
+      doesRegularTemplateApplyToMonth(template, monthContext)
+    )
+    .filter(
+      (template) => !explicitRegularSourceIds.has(template.sourceExpenseId)
+    )
     .filter((template) => !explicitRegularTemplateIds.has(template.id))
-    .filter((template) => !explicitRegularIdentityKeys.has(getTemplateRegularIdentityKey(template)))
-    .filter((template) => !explicitProjectedMatchKeys.has(getTemplateProjectedMatchKey(template, monthContext)))
-    .map((template) => buildProjectedExpenseFromTemplate(template, monthContext));
+    .filter(
+      (template) =>
+        !explicitRegularIdentityKeys.has(
+          getTemplateRegularIdentityKey(template)
+        )
+    )
+    .filter(
+      (template) =>
+        !explicitProjectedMatchKeys.has(
+          getTemplateProjectedMatchKey(template, monthContext)
+        )
+    )
+    .map((template) =>
+      buildProjectedExpenseFromTemplate(template, monthContext)
+    )
 }
 
-function buildCombinedMonthExpenses({ members, regularExpenses, monthContext }) {
-  const applicableTemplates = regularExpenses.filter((template) => doesRegularTemplateApplyToMonth(template, monthContext));
-  const templateById = new Map(applicableTemplates.map((template) => [template.id, template]));
+function buildCombinedMonthExpenses({
+  members,
+  regularExpenses,
+  monthContext,
+}) {
+  const applicableTemplates = regularExpenses.filter((template) =>
+    doesRegularTemplateApplyToMonth(template, monthContext)
+  )
+  const templateById = new Map(
+    applicableTemplates.map((template) => [template.id, template])
+  )
   const templateBySourceExpenseId = new Map(
     applicableTemplates
       .filter((template) => template.sourceExpenseId)
-      .map((template) => [template.sourceExpenseId, template]),
-  );
+      .map((template) => [template.sourceExpenseId, template])
+  )
   const templateByProjectedMatchKey = new Map(
-    applicableTemplates.map((template) => [getTemplateProjectedMatchKey(template, monthContext), template]),
-  );
-  const actualExpenses = getMemberExpensesForMonth(members, monthContext).map((expense) => {
-    const frequency = expense.frequency ?? detectFrequency(expense);
-    const linkedTemplate =
-      templateById.get(expense.templateId) ??
-      templateBySourceExpenseId.get(expense.sourceExpenseId ?? expense.id) ??
-      templateByProjectedMatchKey.get(getExpenseProjectedTemplateMatchKey(expense)) ??
-      ((frequency === "Каждый месяц" || frequency === "Раз в год")
-        ? templateBySourceExpenseId.get(expense.id)
-        : null);
+    applicableTemplates.map((template) => [
+      getTemplateProjectedMatchKey(template, monthContext),
+      template,
+    ])
+  )
+  const actualExpenses = getMemberExpensesForMonth(members, monthContext).map(
+    (expense) => {
+      const frequency = expense.frequency ?? detectFrequency(expense)
+      const linkedTemplate =
+        templateById.get(expense.templateId) ??
+        templateBySourceExpenseId.get(expense.sourceExpenseId ?? expense.id) ??
+        templateByProjectedMatchKey.get(
+          getExpenseProjectedTemplateMatchKey(expense)
+        ) ??
+        (frequency === "Каждый месяц" || frequency === "Раз в год"
+          ? templateBySourceExpenseId.get(expense.id)
+          : null)
 
-    return linkedTemplate
-      ? expense.isMonthOverride
-        ? {
-            ...expense,
-            templateId: linkedTemplate.id,
-          }
-        : {
-            ...expense,
-            title: linkedTemplate.title,
-            cadence: linkedTemplate.cadence,
-            category: linkedTemplate.category,
-            owner: linkedTemplate.owner,
-            payer: linkedTemplate.payer,
-            frequency: linkedTemplate.frequency,
-            dayOfMonth: linkedTemplate.dayOfMonth,
-            month: monthOptions[monthContext.monthIndex],
-            year: monthContext.year,
-            dueLabel: buildDueLabel({
+      return linkedTemplate
+        ? expense.isMonthOverride
+          ? {
+              ...expense,
+              templateId: linkedTemplate.id,
+            }
+          : {
+              ...expense,
+              title: linkedTemplate.title,
+              cadence: linkedTemplate.cadence,
+              category: linkedTemplate.category,
+              owner: linkedTemplate.owner,
+              payer: linkedTemplate.payer,
               frequency: linkedTemplate.frequency,
               dayOfMonth: linkedTemplate.dayOfMonth,
               month: monthOptions[monthContext.monthIndex],
-              urgent: expense.urgent,
-              completed: expense.completed,
-            }),
-            templateId: linkedTemplate.id,
-          }
-      : expense;
-  });
+              year: monthContext.year,
+              dueLabel: buildDueLabel({
+                frequency: linkedTemplate.frequency,
+                dayOfMonth: linkedTemplate.dayOfMonth,
+                month: monthOptions[monthContext.monthIndex],
+                urgent: expense.urgent,
+                completed: expense.completed,
+              }),
+              templateId: linkedTemplate.id,
+            }
+        : expense
+    }
+  )
   const projectedRegularExpenses = getProjectedRegularExpensesForMonth({
     regularExpenses,
     monthContext,
     actualExpenses,
-  });
+  })
 
-  const dedupedExpenses = [];
-  const seenRegularKeys = new Set();
+  const dedupedExpenses = []
+  const seenRegularKeys = new Set()
 
-  [...actualExpenses, ...projectedRegularExpenses].forEach((expense) => {
-    const regularKey =
-      expense.templateId
-        ? `template:${expense.templateId}`
-        : getExpenseRegularIdentityKey(expense);
+  ;[...actualExpenses, ...projectedRegularExpenses].forEach((expense) => {
+    const regularKey = expense.templateId
+      ? `template:${expense.templateId}`
+      : getExpenseRegularIdentityKey(expense)
 
     if (regularKey) {
       if (seenRegularKeys.has(regularKey)) {
-        return;
+        return
       }
 
-      seenRegularKeys.add(regularKey);
+      seenRegularKeys.add(regularKey)
     }
 
-    dedupedExpenses.push(expense);
-  });
+    dedupedExpenses.push(expense)
+  })
 
   return dedupedExpenses.sort((left, right) => {
-    const dayDifference = getExpenseDayOfMonth(left) - getExpenseDayOfMonth(right);
+    const dayDifference =
+      getExpenseDayOfMonth(left) - getExpenseDayOfMonth(right)
     if (dayDifference !== 0) {
-      return dayDifference;
+      return dayDifference
     }
 
-    return left.title.localeCompare(right.title, "ru");
-  });
+    return left.title.localeCompare(right.title, "ru")
+  })
 }
 
-function calculateRegularMonthlyReserveBase({ regularExpenses, currentContext }) {
+function calculateRegularMonthlyReserveBase({
+  regularExpenses,
+  currentContext,
+}) {
   return Math.round(
     regularExpenses
       .filter((template) => template.isActive !== false)
       .reduce((sum, template) => {
-        const amount = Number(getRegularAmountForPeriod(template, currentContext.year, currentContext.monthName) ?? 0);
+        const amount = Number(
+          getRegularAmountForPeriod(
+            template,
+            currentContext.year,
+            currentContext.monthName
+          ) ?? 0
+        )
         if (!Number.isFinite(amount) || amount <= 0) {
-          return sum;
+          return sum
         }
 
         if (template.frequency === "Раз в год") {
-          return sum + amount / 12;
+          return sum + amount / 12
         }
 
-        return sum + amount;
-      }, 0),
-  );
+        return sum + amount
+      }, 0)
+  )
 }
 
-function calculateBudgetReserveTarget({ settings, funds, regularMonthlyReserveBase }) {
-  const reserveFund = funds.find((fund) => fund.fundType === "budget_reserve");
+function calculateBudgetReserveTarget({
+  settings,
+  funds,
+  regularMonthlyReserveBase,
+}) {
+  const reserveFund = funds.find((fund) => fund.fundType === "budget_reserve")
   if (!reserveFund) {
-    return 0;
+    return 0
   }
 
-  const manualTarget = reserveFund.manualTargetAmount ?? settings.budgetReserveManualTarget;
+  const manualTarget =
+    reserveFund.manualTargetAmount ?? settings.budgetReserveManualTarget
   if (reserveFund.targetMode === "manual" && manualTarget) {
-    return Number(manualTarget);
+    return Number(manualTarget)
   }
 
-  const multiplier = reserveFund.targetMultiplier || settings.budgetReserveMonthsMultiplier || 2;
-  return Math.round(regularMonthlyReserveBase * multiplier);
+  const multiplier =
+    reserveFund.targetMultiplier || settings.budgetReserveMonthsMultiplier || 2
+  return Math.round(regularMonthlyReserveBase * multiplier)
 }
 
-function calculateEmergencyReserveTarget({ settings, funds, regularMonthlyReserveBase }) {
-  const reserveFund = funds.find((fund) => fund.fundType === "emergency_reserve");
+function calculateEmergencyReserveTarget({
+  settings,
+  funds,
+  regularMonthlyReserveBase,
+}) {
+  const reserveFund = funds.find(
+    (fund) => fund.fundType === "emergency_reserve"
+  )
   if (!reserveFund) {
-    return 0;
+    return 0
   }
 
-  const manualTarget = reserveFund.manualTargetAmount ?? settings.emergencyReserveManualTarget;
+  const manualTarget =
+    reserveFund.manualTargetAmount ?? settings.emergencyReserveManualTarget
   if (reserveFund.targetMode === "manual" && manualTarget) {
-    return Number(manualTarget);
+    return Number(manualTarget)
   }
 
-  const multiplier = reserveFund.targetMultiplier || settings.emergencyReserveMonthsMultiplier || 3;
-  return Math.round(regularMonthlyReserveBase * multiplier);
+  const multiplier =
+    reserveFund.targetMultiplier ||
+    settings.emergencyReserveMonthsMultiplier ||
+    3
+  return Math.round(regularMonthlyReserveBase * multiplier)
 }
 
 function isSnapshotNewer(candidate, existing) {
   if (!existing) {
-    return true;
+    return true
   }
 
-  const candidateDate = new Date(candidate.snapshotDate).getTime();
-  const existingDate = new Date(existing.snapshotDate).getTime();
+  const candidateDate = new Date(candidate.snapshotDate).getTime()
+  const existingDate = new Date(existing.snapshotDate).getTime()
   if (candidateDate !== existingDate) {
-    return candidateDate > existingDate;
+    return candidateDate > existingDate
   }
 
-  const candidateCreatedAt = candidate.createdAt ? new Date(candidate.createdAt).getTime() : 0;
-  const existingCreatedAt = existing.createdAt ? new Date(existing.createdAt).getTime() : 0;
+  const candidateCreatedAt = candidate.createdAt
+    ? new Date(candidate.createdAt).getTime()
+    : 0
+  const existingCreatedAt = existing.createdAt
+    ? new Date(existing.createdAt).getTime()
+    : 0
   if (candidateCreatedAt !== existingCreatedAt) {
-    return candidateCreatedAt > existingCreatedAt;
+    return candidateCreatedAt > existingCreatedAt
   }
 
-  return String(candidate.id) > String(existing.id);
+  return String(candidate.id) > String(existing.id)
 }
 
 function getCurrentBalanceEntries({ snapshots, fundId = null }) {
-  const latestByBalance = new Map();
+  const latestByBalance = new Map()
 
   snapshots
     .filter((snapshot) => (fundId ? snapshot.fundId === fundId : true))
     .forEach((snapshot) => {
-      const key = `${snapshot.accountId}|${snapshot.fundId}|${snapshot.assetType}`;
-      const existing = latestByBalance.get(key);
+      const key = `${snapshot.accountId}|${snapshot.fundId}|${snapshot.assetType}`
+      const existing = latestByBalance.get(key)
       if (isSnapshotNewer(snapshot, existing)) {
-        latestByBalance.set(key, snapshot);
+        latestByBalance.set(key, snapshot)
       }
-    });
+    })
 
   return [...latestByBalance.values()].sort((left, right) => {
-    const rightDate = new Date(right.snapshotDate).getTime();
-    const leftDate = new Date(left.snapshotDate).getTime();
+    const rightDate = new Date(right.snapshotDate).getTime()
+    const leftDate = new Date(left.snapshotDate).getTime()
     if (rightDate !== leftDate) {
-      return rightDate - leftDate;
+      return rightDate - leftDate
     }
 
-    return Number(right.amountCzk ?? 0) - Number(left.amountCzk ?? 0);
-  });
+    return Number(right.amountCzk ?? 0) - Number(left.amountCzk ?? 0)
+  })
 }
 
 function formatBalanceEntryCount(count) {
-  const remainder10 = count % 10;
-  const remainder100 = count % 100;
+  const remainder10 = count % 10
+  const remainder100 = count % 100
 
   if (remainder10 === 1 && remainder100 !== 11) {
-    return `${count} баланс`;
+    return `${count} баланс`
   }
 
-  if (remainder10 >= 2 && remainder10 <= 4 && (remainder100 < 12 || remainder100 > 14)) {
-    return `${count} баланса`;
+  if (
+    remainder10 >= 2 &&
+    remainder10 <= 4 &&
+    (remainder100 < 12 || remainder100 > 14)
+  ) {
+    return `${count} баланса`
   }
 
-  return `${count} балансов`;
+  return `${count} балансов`
 }
 
 function calculateFundCurrentBalance({ fundId, snapshots }) {
-  return getCurrentBalanceEntries({ snapshots, fundId }).reduce((sum, snapshot) => sum + Number(snapshot.amountCzk ?? 0), 0);
+  return getCurrentBalanceEntries({ snapshots, fundId }).reduce(
+    (sum, snapshot) => sum + Number(snapshot.amountCzk ?? 0),
+    0
+  )
 }
 
 function calculateTotalCapitalCzk({ snapshots }) {
-  return getCurrentBalanceEntries({ snapshots }).reduce((sum, snapshot) => sum + Number(snapshot.amountCzk ?? 0), 0);
+  return getCurrentBalanceEntries({ snapshots }).reduce(
+    (sum, snapshot) => sum + Number(snapshot.amountCzk ?? 0),
+    0
+  )
 }
 
 function calculateNextMonthBudgetTotal(expenses) {
-  return expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
+  return expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0)
 }
 
 function calculatePayerAllocationFromBudgetItems(expenses) {
   return expenses.reduce(
     (result, expense) => {
-      const amount = Number(expense.amount ?? 0);
+      const amount = Number(expense.amount ?? 0)
       if (expense.payer === "Рома") {
-        result.roma += amount;
+        result.roma += amount
       } else if (expense.payer === "Саша") {
-        result.sasha += amount;
+        result.sasha += amount
       } else {
-        result.unassigned += amount;
+        result.unassigned += amount
       }
 
-      return result;
+      return result
     },
-    { roma: 0, sasha: 0, unassigned: 0 },
-  );
+    { roma: 0, sasha: 0, unassigned: 0 }
+  )
 }
 
-function calculateBudgetReserveReplenishment({ nextMonthBudgetTotal, budgetReserveCurrent }) {
-  const fundingAmount = Math.min(budgetReserveCurrent, nextMonthBudgetTotal);
-  const deficit = Math.max(nextMonthBudgetTotal - budgetReserveCurrent, 0);
+function calculateBudgetReserveReplenishment({
+  nextMonthBudgetTotal,
+  budgetReserveCurrent,
+}) {
+  const fundingAmount = Math.min(budgetReserveCurrent, nextMonthBudgetTotal)
+  const deficit = Math.max(nextMonthBudgetTotal - budgetReserveCurrent, 0)
 
   return {
     fundingAmount,
     replenishmentRequired: fundingAmount,
     deficit,
-  };
+  }
 }
 
-function calculateYearIncomeSummary({ incomeEvents, selectedYear, currentContext, expenseTotal = 0 }) {
-  const monthlyMap = new Map();
+function calculateYearIncomeSummary({
+  incomeEvents,
+  selectedYear,
+  currentContext,
+  expenseTotal = 0,
+}) {
+  const monthlyMap = new Map()
 
   incomeEvents.forEach((event) => {
-    const eventDate = parseSqlDateParts(event.incomeDate);
+    const eventDate = parseSqlDateParts(event.incomeDate)
     if (eventDate.year !== selectedYear) {
-      return;
+      return
     }
 
     if (event.incomeType === "salary" && event.owner === "shared") {
-      return;
+      return
     }
 
-    const monthIndex = Math.max(eventDate.month - 1, 0);
-    const monthName = fullMonthNames[monthIndex];
-    const key = `${selectedYear}-${monthIndex}`;
+    const monthIndex = Math.max(eventDate.month - 1, 0)
+    const monthName = fullMonthNames[monthIndex]
+    const key = `${selectedYear}-${monthIndex}`
     const bucket = monthlyMap.get(key) ?? {
       monthIndex,
       monthName,
@@ -2556,52 +2574,58 @@ function calculateYearIncomeSummary({ incomeEvents, selectedYear, currentContext
       receivedRoma: 0,
       receivedSasha: 0,
       receivedShared: 0,
-    };
+    }
 
     if (event.status === "received") {
-      const amount = Number(event.actualAmount ?? event.amountCzk ?? 0);
+      const amount = Number(event.actualAmount ?? event.amountCzk ?? 0)
       if (event.owner === "roma") {
-        bucket.receivedRoma += amount;
+        bucket.receivedRoma += amount
       } else if (event.owner === "sasha") {
-        bucket.receivedSasha += amount;
+        bucket.receivedSasha += amount
       } else {
-        bucket.receivedShared += amount;
+        bucket.receivedShared += amount
       }
     } else {
-      const amount = Number(event.expectedAmount ?? event.amountCzk ?? 0);
+      const amount = Number(event.expectedAmount ?? event.amountCzk ?? 0)
       if (event.owner === "roma") {
-        bucket.expectedRoma += amount;
+        bucket.expectedRoma += amount
       } else if (event.owner === "sasha") {
-        bucket.expectedSasha += amount;
+        bucket.expectedSasha += amount
       } else {
-        bucket.expectedShared += amount;
+        bucket.expectedShared += amount
       }
     }
 
-    monthlyMap.set(key, bucket);
-  });
+    monthlyMap.set(key, bucket)
+  })
 
   const summary = [...monthlyMap.values()].reduce(
     (acc, bucket) => {
-      const receivedTotal = bucket.receivedRoma + bucket.receivedSasha + bucket.receivedShared;
-      const expectedTotal = bucket.expectedRoma + bucket.expectedSasha + bucket.expectedShared;
+      const receivedTotal =
+        bucket.receivedRoma + bucket.receivedSasha + bucket.receivedShared
+      const expectedTotal =
+        bucket.expectedRoma + bucket.expectedSasha + bucket.expectedShared
       const effectiveTotal =
         (bucket.receivedRoma > 0 ? bucket.receivedRoma : bucket.expectedRoma) +
-        (bucket.receivedSasha > 0 ? bucket.receivedSasha : bucket.expectedSasha) +
-        (bucket.receivedShared > 0 ? bucket.receivedShared : bucket.expectedShared);
+        (bucket.receivedSasha > 0
+          ? bucket.receivedSasha
+          : bucket.expectedSasha) +
+        (bucket.receivedShared > 0
+          ? bucket.receivedShared
+          : bucket.expectedShared)
 
-      acc.received += receivedTotal;
-      acc.totalMixed += effectiveTotal;
-      acc.expectedFuture += Math.max(expectedTotal - receivedTotal, 0);
+      acc.received += receivedTotal
+      acc.totalMixed += effectiveTotal
+      acc.expectedFuture += Math.max(expectedTotal - receivedTotal, 0)
 
-      return acc;
+      return acc
     },
-    { received: 0, expectedFuture: 0, totalMixed: 0 },
-  );
+    { received: 0, expectedFuture: 0, totalMixed: 0 }
+  )
 
-  const totalIncome = summary.totalMixed;
-  const totalExpenses = expenseTotal;
-  const result = totalIncome - totalExpenses;
+  const totalIncome = summary.totalMixed
+  const totalExpenses = expenseTotal
+  const result = totalIncome - totalExpenses
 
   return {
     ...summary,
@@ -2609,47 +2633,76 @@ function calculateYearIncomeSummary({ incomeEvents, selectedYear, currentContext
     totalExpenses,
     result,
     afterBudget: result,
-  };
+  }
 }
 
-function buildIncomeMonthRow({ incomeEvents, selectedYear, monthName, monthIndex, currentContext }) {
+function buildIncomeMonthRow({
+  incomeEvents,
+  selectedYear,
+  monthName,
+  monthIndex,
+  currentContext,
+}) {
   const monthEvents = incomeEvents.filter((event) => {
-    const eventDate = parseSqlDateParts(event.incomeDate);
-    if (eventDate.year !== selectedYear || Math.max(eventDate.month - 1, 0) !== monthIndex) {
-      return false;
+    const eventDate = parseSqlDateParts(event.incomeDate)
+    if (
+      eventDate.year !== selectedYear ||
+      Math.max(eventDate.month - 1, 0) !== monthIndex
+    ) {
+      return false
     }
 
     if (event.incomeType === "salary" && event.owner === "shared") {
-      return false;
+      return false
     }
 
-    return true;
-  });
+    return true
+  })
 
   const expectedRoma = monthEvents
     .filter((event) => event.status === "expected" && event.owner === "roma")
-    .reduce((sum, event) => sum + Number(event.expectedAmount ?? event.amountCzk ?? 0), 0);
+    .reduce(
+      (sum, event) =>
+        sum + Number(event.expectedAmount ?? event.amountCzk ?? 0),
+      0
+    )
   const expectedSasha = monthEvents
     .filter((event) => event.status === "expected" && event.owner === "sasha")
-    .reduce((sum, event) => sum + Number(event.expectedAmount ?? event.amountCzk ?? 0), 0);
+    .reduce(
+      (sum, event) =>
+        sum + Number(event.expectedAmount ?? event.amountCzk ?? 0),
+      0
+    )
   const receivedRoma = monthEvents
     .filter((event) => event.status === "received" && event.owner === "roma")
-    .reduce((sum, event) => sum + Number(event.actualAmount ?? event.amountCzk ?? 0), 0);
+    .reduce(
+      (sum, event) => sum + Number(event.actualAmount ?? event.amountCzk ?? 0),
+      0
+    )
   const receivedSasha = monthEvents
     .filter((event) => event.status === "received" && event.owner === "sasha")
-    .reduce((sum, event) => sum + Number(event.actualAmount ?? event.amountCzk ?? 0), 0);
+    .reduce(
+      (sum, event) => sum + Number(event.actualAmount ?? event.amountCzk ?? 0),
+      0
+    )
   const receivedShared = monthEvents
     .filter((event) => event.status === "received" && event.owner === "shared")
-    .reduce((sum, event) => sum + Number(event.actualAmount ?? event.amountCzk ?? 0), 0);
+    .reduce(
+      (sum, event) => sum + Number(event.actualAmount ?? event.amountCzk ?? 0),
+      0
+    )
 
-  const monthOrder = getPeriodOrderKey(selectedYear, monthName);
-  const currentOrder = getPeriodOrderKey(currentContext.year, currentContext.monthName);
-  const expectedTotal = expectedRoma + expectedSasha;
-  const receivedTotal = receivedRoma + receivedSasha + receivedShared;
+  const monthOrder = getPeriodOrderKey(selectedYear, monthName)
+  const currentOrder = getPeriodOrderKey(
+    currentContext.year,
+    currentContext.monthName
+  )
+  const expectedTotal = expectedRoma + expectedSasha
+  const receivedTotal = receivedRoma + receivedSasha + receivedShared
   const effectiveTotal =
     (receivedRoma > 0 ? receivedRoma : expectedRoma) +
     (receivedSasha > 0 ? receivedSasha : expectedSasha) +
-    receivedShared;
+    receivedShared
 
   return {
     monthName,
@@ -2664,7 +2717,7 @@ function buildIncomeMonthRow({ incomeEvents, selectedYear, monthName, monthIndex
     received: receivedTotal,
     effectiveTotal,
     isFutureOrCurrent: monthOrder >= currentOrder,
-  };
+  }
 }
 
 function calculateIncomeWaterfall({
@@ -2676,25 +2729,51 @@ function calculateIncomeWaterfall({
   emergencyReserveCurrent,
   emergencyReserveTarget,
 }) {
-  const currentMonthOrder = getPeriodOrderKey(currentContext.year, currentContext.monthName);
+  const currentMonthOrder = getPeriodOrderKey(
+    currentContext.year,
+    currentContext.monthName
+  )
   const receivedIncome = incomeEvents
     .filter((event) => {
       if (event.status !== "received") {
-        return false;
+        return false
       }
 
-      const eventDate = parseSqlDateParts(event.incomeDate);
-      return getPeriodOrderKey(eventDate.year, getMonthNameByNumber(eventDate.month)) === currentMonthOrder;
+      const eventDate = parseSqlDateParts(event.incomeDate)
+      return (
+        getPeriodOrderKey(
+          eventDate.year,
+          getMonthNameByNumber(eventDate.month)
+        ) === currentMonthOrder
+      )
     })
-    .reduce((sum, event) => sum + Number(event.amountCzk ?? 0), 0);
+    .reduce((sum, event) => sum + Number(event.amountCzk ?? 0), 0)
 
-  const budgetReserveShortfallToTarget = Math.max(budgetReserveTarget - budgetReserveCurrent, 0);
-  const budgetReserveNeed = Math.max(budgetReserveReplenishmentRequired, budgetReserveShortfallToTarget);
-  const budgetReserveCovered = Math.min(receivedIncome, budgetReserveNeed);
-  const remainingAfterBudgetReserve = Math.max(receivedIncome - budgetReserveCovered, 0);
-  const emergencyReserveNeed = Math.max(emergencyReserveTarget - emergencyReserveCurrent, 0);
-  const emergencyReserveCovered = Math.min(remainingAfterBudgetReserve, emergencyReserveNeed);
-  const availableForInvestments = Math.max(remainingAfterBudgetReserve - emergencyReserveCovered, 0);
+  const budgetReserveShortfallToTarget = Math.max(
+    budgetReserveTarget - budgetReserveCurrent,
+    0
+  )
+  const budgetReserveNeed = Math.max(
+    budgetReserveReplenishmentRequired,
+    budgetReserveShortfallToTarget
+  )
+  const budgetReserveCovered = Math.min(receivedIncome, budgetReserveNeed)
+  const remainingAfterBudgetReserve = Math.max(
+    receivedIncome - budgetReserveCovered,
+    0
+  )
+  const emergencyReserveNeed = Math.max(
+    emergencyReserveTarget - emergencyReserveCurrent,
+    0
+  )
+  const emergencyReserveCovered = Math.min(
+    remainingAfterBudgetReserve,
+    emergencyReserveNeed
+  )
+  const availableForInvestments = Math.max(
+    remainingAfterBudgetReserve - emergencyReserveCovered,
+    0
+  )
 
   return {
     receivedIncome,
@@ -2703,7 +2782,7 @@ function calculateIncomeWaterfall({
     emergencyReserveCovered,
     emergencyReserveNeed,
     availableForInvestments,
-  };
+  }
 }
 
 function calculateCashflowWarnings({
@@ -2715,223 +2794,256 @@ function calculateCashflowWarnings({
   payerAllocation,
   snapshots,
 }) {
-  const warnings = [];
+  const warnings = []
 
   if (!nextMonthBudgetTotal) {
-    warnings.push("Нет бюджета следующего месяца.");
+    warnings.push("Нет бюджета следующего месяца.")
   }
 
   if (budgetReserveCurrent < budgetReserveTarget) {
-    warnings.push("Бюджетная кубышка ниже целевого уровня.");
+    warnings.push("Бюджетная кубышка ниже целевого уровня.")
   }
 
   if (budgetReserveCurrent < nextMonthBudgetTotal) {
     warnings.push(
       `Бюджетной кубышки не хватает на следующий месяц. Дефицит: ${formatCurrency(
-        nextMonthBudgetTotal - budgetReserveCurrent,
-      )} Kč.`,
-    );
+        nextMonthBudgetTotal - budgetReserveCurrent
+      )} Kč.`
+    )
   }
 
   if (emergencyReserveCurrent < emergencyReserveTarget) {
-    warnings.push("Сейф безопасности ниже целевого уровня.");
+    warnings.push("Сейф безопасности ниже целевого уровня.")
   }
 
   if (payerAllocation.unassigned > 0) {
-    warnings.push("Есть строки бюджета без плательщика.");
+    warnings.push("Есть строки бюджета без плательщика.")
   }
 
   const latestSnapshotTimestamp = snapshots.length
-    ? Math.max(...snapshots.map((snapshot) => new Date(snapshot.snapshotDate).getTime()))
-    : 0;
-  const freshnessLimit = 1000 * 60 * 60 * 24 * 30;
+    ? Math.max(
+        ...snapshots.map((snapshot) =>
+          new Date(snapshot.snapshotDate).getTime()
+        )
+      )
+    : 0
+  const freshnessLimit = 1000 * 60 * 60 * 24 * 30
 
-  if (!latestSnapshotTimestamp || Date.now() - latestSnapshotTimestamp > freshnessLimit) {
-    warnings.push("Нет свежих снимков баланса.");
+  if (
+    !latestSnapshotTimestamp ||
+    Date.now() - latestSnapshotTimestamp > freshnessLimit
+  ) {
+    warnings.push("Нет свежих снимков баланса.")
   }
 
-  return warnings;
+  return warnings
 }
 
 function getCategoryOption(category, categories) {
-  const matchedCategory = categories.find((item) => item.label === category);
-  return matchedCategory ? formatCategoryOption(matchedCategory) : "";
+  const matchedCategory = categories.find((item) => item.label === category)
+  return matchedCategory ? formatCategoryOption(matchedCategory) : ""
 }
 
 function getCategoryMeta(categoryLabel, categories) {
-  const matchedCategory = categories.find((item) => item.label === categoryLabel);
+  const matchedCategory = categories.find(
+    (item) => item.label === categoryLabel
+  )
   return {
     icon: matchedCategory?.icon ?? "•",
     label: matchedCategory?.label ?? categoryLabel,
-  };
+  }
 }
 
 function getCategoryDisplay(categoryLabel, categories) {
-  const matchedCategory = categories.find((item) => item.label === categoryLabel);
-  return matchedCategory ? formatCategoryOption(matchedCategory) : categoryLabel;
+  const matchedCategory = categories.find(
+    (item) => item.label === categoryLabel
+  )
+  return matchedCategory ? formatCategoryOption(matchedCategory) : categoryLabel
 }
 
 function stripCategoryLabel(value) {
-  return value.replace(/^[^\p{L}\p{N}]+\s*/u, "").trim();
+  return value.replace(/^[^\p{L}\p{N}]+\s*/u, "").trim()
 }
 
 function getExpenseOwner(expense, member) {
-  return expense.owner ?? member.name;
+  return expense.owner ?? member.name
 }
 
 function getExpensePayer(expense) {
-  return expense.payer ?? "Рома";
+  return expense.payer ?? "Рома"
 }
 
 function normalizeOwnerName(owner, payer = "Рома") {
   if (ownerOptions.includes(owner)) {
-    return owner;
+    return owner
   }
 
   if (payerOptions.includes(payer)) {
-    return payer;
+    return payer
   }
 
-  return "Общее";
+  return "Общее"
 }
 
 function normalizePayerName(payer) {
-  return payerOptions.includes(payer) ? payer : "Рома";
+  return payerOptions.includes(payer) ? payer : "Рома"
 }
 
 function isValidRegularTemplate(template) {
   return Boolean(
     template &&
-    String(template.title ?? "").trim() &&
-    String(template.category ?? "").trim() &&
-    String(template.dayOfMonth ?? "").trim() &&
-    payerOptions.includes(normalizePayerName(template.payer)) &&
-    ownerOptions.includes(normalizeOwnerName(template.owner, template.payer)) &&
-    (template.frequency === "Каждый месяц" || template.frequency === "Раз в год") &&
-    Array.isArray(template.history) &&
-    template.history.length > 0,
-  );
+      String(template.title ?? "").trim() &&
+      String(template.category ?? "").trim() &&
+      String(template.dayOfMonth ?? "").trim() &&
+      payerOptions.includes(normalizePayerName(template.payer)) &&
+      ownerOptions.includes(
+        normalizeOwnerName(template.owner, template.payer)
+      ) &&
+      (template.frequency === "Каждый месяц" ||
+        template.frequency === "Раз в год") &&
+      Array.isArray(template.history) &&
+      template.history.length > 0
+  )
 }
 
 function getRegularTemplateDedupKey(template) {
   return [
     template.sourceExpenseId ?? "",
-    String(template.title ?? "").trim().toLowerCase(),
+    String(template.title ?? "")
+      .trim()
+      .toLowerCase(),
     normalizeOwnerName(template.owner, template.payer),
     normalizePayerName(template.payer),
     template.frequency ?? "",
     template.dayOfMonth ?? "",
     normalizeMonthName(template.month),
     template.cadence ?? "",
-  ].join("|");
+  ].join("|")
 }
 
 function getRegularTemplateSemanticKey(template) {
   return [
-    String(template.title ?? "").trim().toLowerCase(),
-    String(template.category ?? "").trim().toLowerCase(),
+    String(template.title ?? "")
+      .trim()
+      .toLowerCase(),
+    String(template.category ?? "")
+      .trim()
+      .toLowerCase(),
     normalizeOwnerName(template.owner, template.payer),
     normalizePayerName(template.payer),
     template.frequency ?? "",
     template.dayOfMonth ?? "",
     normalizeMonthName(template.month),
     template.cadence ?? "",
-  ].join("|");
+  ].join("|")
 }
 
 function getRegularHistoryEntryKey(entry) {
-  return `${entry.effectiveYear}|${normalizeMonthName(entry.effectiveMonth)}`;
+  return `${entry.effectiveYear}|${normalizeMonthName(entry.effectiveMonth)}`
 }
 
 function mergeRegularTemplateHistory(...historyCollections) {
-  const mergedEntries = new Map();
+  const mergedEntries = new Map()
 
   historyCollections.flat().forEach((entry) => {
     if (!entry) {
-      return;
+      return
     }
 
-    const key = getRegularHistoryEntryKey(entry);
-    const existing = mergedEntries.get(key);
+    const key = getRegularHistoryEntryKey(entry)
+    const existing = mergedEntries.get(key)
 
     if (!existing) {
-      mergedEntries.set(key, entry);
-      return;
+      mergedEntries.set(key, entry)
+      return
     }
 
-    const existingChangedAt = existing.changedAt ? new Date(existing.changedAt).getTime() : 0;
-    const nextChangedAt = entry.changedAt ? new Date(entry.changedAt).getTime() : 0;
+    const existingChangedAt = existing.changedAt
+      ? new Date(existing.changedAt).getTime()
+      : 0
+    const nextChangedAt = entry.changedAt
+      ? new Date(entry.changedAt).getTime()
+      : 0
 
     if (nextChangedAt >= existingChangedAt) {
       mergedEntries.set(key, {
         ...existing,
         ...entry,
-      });
+      })
     }
-  });
+  })
 
   return [...mergedEntries.values()].sort(
     (left, right) =>
       getPeriodOrderKey(left.effectiveYear, left.effectiveMonth) -
-      getPeriodOrderKey(right.effectiveYear, right.effectiveMonth),
-  );
+      getPeriodOrderKey(right.effectiveYear, right.effectiveMonth)
+  )
 }
 
 function choosePreferredRegularTemplate(left, right) {
-  const leftStopOrder = getRegularStopOrder(left) ?? -1;
-  const rightStopOrder = getRegularStopOrder(right) ?? -1;
+  const leftStopOrder = getRegularStopOrder(left) ?? -1
+  const rightStopOrder = getRegularStopOrder(right) ?? -1
 
   if (leftStopOrder !== rightStopOrder) {
-    return rightStopOrder > leftStopOrder ? right : left;
+    return rightStopOrder > leftStopOrder ? right : left
   }
 
-  const leftHistoryLength = left.history?.length ?? 0;
-  const rightHistoryLength = right.history?.length ?? 0;
+  const leftHistoryLength = left.history?.length ?? 0
+  const rightHistoryLength = right.history?.length ?? 0
 
   if (rightHistoryLength !== leftHistoryLength) {
-    return rightHistoryLength > leftHistoryLength ? right : left;
+    return rightHistoryLength > leftHistoryLength ? right : left
   }
 
   const leftChangedAt = leftHistoryLength
     ? new Date(left.history[leftHistoryLength - 1].changedAt ?? 0).getTime()
-    : 0;
+    : 0
   const rightChangedAt = rightHistoryLength
     ? new Date(right.history[rightHistoryLength - 1].changedAt ?? 0).getTime()
-    : 0;
+    : 0
 
   if (rightChangedAt !== leftChangedAt) {
-    return rightChangedAt > leftChangedAt ? right : left;
+    return rightChangedAt > leftChangedAt ? right : left
   }
 
   if (!left.sourceExpenseId && right.sourceExpenseId) {
-    return right;
+    return right
   }
 
-  return left;
+  return left
 }
 
 function dedupeRegularTemplates(templates = []) {
-  const grouped = new Map();
+  const grouped = new Map()
 
   templates.filter(isValidRegularTemplate).forEach((template, index) => {
-    const key = getRegularTemplateSemanticKey(template);
-    const existing = grouped.get(key);
+    const key = getRegularTemplateSemanticKey(template)
+    const existing = grouped.get(key)
 
     if (!existing) {
       grouped.set(key, {
         ...template,
         sortOrder: template.sortOrder ?? index,
         history: mergeRegularTemplateHistory(template.history ?? []),
-      });
-      return;
+      })
+      return
     }
 
-    const preferred = choosePreferredRegularTemplate(existing, template);
+    const preferred = choosePreferredRegularTemplate(existing, template)
     grouped.set(key, {
       ...preferred,
-      sortOrder: Math.min(existing.sortOrder ?? index, template.sortOrder ?? index),
-      history: mergeRegularTemplateHistory(existing.history ?? [], template.history ?? []),
-      sourceExpenseId: preferred.sourceExpenseId ?? existing.sourceExpenseId ?? template.sourceExpenseId,
+      sortOrder: Math.min(
+        existing.sortOrder ?? index,
+        template.sortOrder ?? index
+      ),
+      history: mergeRegularTemplateHistory(
+        existing.history ?? [],
+        template.history ?? []
+      ),
+      sourceExpenseId:
+        preferred.sourceExpenseId ??
+        existing.sourceExpenseId ??
+        template.sourceExpenseId,
       stoppedFromYear:
         preferred.stoppedFromYear ??
         existing.stoppedFromYear ??
@@ -2942,238 +3054,263 @@ function dedupeRegularTemplates(templates = []) {
         existing.stoppedFromMonth ??
         template.stoppedFromMonth ??
         null,
-    });
-  });
+    })
+  })
 
   return [...grouped.values()].sort((left, right) => {
-    const sortDifference = (left.sortOrder ?? 0) - (right.sortOrder ?? 0);
+    const sortDifference = (left.sortOrder ?? 0) - (right.sortOrder ?? 0)
     if (sortDifference !== 0) {
-      return sortDifference;
+      return sortDifference
     }
 
-    return String(left.title ?? "").localeCompare(String(right.title ?? ""), "ru");
-  });
+    return String(left.title ?? "").localeCompare(
+      String(right.title ?? ""),
+      "ru"
+    )
+  })
 }
 
 function buildMonthContext(year, monthName) {
-  const normalizedMonthName = normalizeMonthName(monthName);
-  const monthIndex = Math.max(fullMonthNames.findIndex((item) => item === normalizedMonthName), 0);
+  const normalizedMonthName = normalizeMonthName(monthName)
+  const monthIndex = Math.max(
+    fullMonthNames.findIndex((item) => item === normalizedMonthName),
+    0
+  )
 
   return {
     monthIndex,
     monthName: fullMonthNames[monthIndex],
     monthShort: monthOptions[monthIndex],
     year,
-  };
-}
-
-function readNavigationStateFromLocation() {
-  if (typeof window === "undefined") {
-    return { screen: "months", periodContext: null };
   }
-
-  const hash = window.location.hash.startsWith("#") ? window.location.hash.slice(1) : "";
-  const params = new URLSearchParams(hash);
-  const requestedScreen = params.get("screen");
-  const screen = supportedScreenNames.has(requestedScreen) ? requestedScreen : "months";
-
-  if (screen === "periodMonth") {
-    const year = Number(params.get("year"));
-    const month = normalizeMonthName(params.get("month") ?? "");
-
-    if (Number.isFinite(year) && fullMonthNames.includes(month)) {
-      return {
-        screen,
-        periodContext: buildMonthContext(year, month),
-      };
-    }
-
-    return { screen: "months", periodContext: null };
-  }
-
-  return { screen, periodContext: null };
-}
-
-function buildNavigationHash(screen, selectedPeriodContext) {
-  const params = new URLSearchParams();
-  params.set("screen", screen);
-
-  if (screen === "periodMonth" && selectedPeriodContext) {
-    params.set("year", String(selectedPeriodContext.year));
-    params.set("month", selectedPeriodContext.monthName);
-  }
-
-  return params.toString();
 }
 
 function getExpenseMonth(expense) {
-  return expense.month ?? "Фев";
+  return expense.month ?? "Фев"
 }
 
 function getExpenseDayOfMonth(expense) {
-  return Number(expense.dueLabel?.match(/\d+/)?.[0] ?? 99);
+  return Number(expense.dueLabel?.match(/\d+/)?.[0] ?? 99)
 }
 
 function getExpensePaymentDateLabel(expense) {
-  const day = getExpenseDayOfMonth(expense);
-  const normalizedMonthName = normalizeMonthName(expense.month);
-  const monthIndex = fullMonthNames.findIndex((monthName) => monthName === normalizedMonthName);
-  const monthLabel = monthNamesGenitive[monthIndex] ?? monthNamesGenitive[getCurrentMonthContext().monthIndex];
+  const day = getExpenseDayOfMonth(expense)
+  const normalizedMonthName = normalizeMonthName(expense.month)
+  const monthIndex = fullMonthNames.findIndex(
+    (monthName) => monthName === normalizedMonthName
+  )
+  const monthLabel =
+    monthNamesGenitive[monthIndex] ??
+    monthNamesGenitive[getCurrentMonthContext().monthIndex]
 
-  return `Оплата ${day} ${monthLabel}`;
+  return `Оплата ${day} ${monthLabel}`
 }
 
 function isExpensePastDue(expense) {
   if (expense.completed) {
-    return false;
+    return false
   }
 
-  const normalizedMonthName = normalizeMonthName(expense.month);
-  const monthIndex = fullMonthNames.findIndex((monthName) => monthName === normalizedMonthName);
-  const year = expense.year ?? getCurrentMonthContext().year;
-  const dueDate = new Date(year, monthIndex === -1 ? getCurrentMonthContext().monthIndex : monthIndex, getExpenseDayOfMonth(expense));
-  const today = new Date();
-  const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+  const normalizedMonthName = normalizeMonthName(expense.month)
+  const monthIndex = fullMonthNames.findIndex(
+    (monthName) => monthName === normalizedMonthName
+  )
+  const year = expense.year ?? getCurrentMonthContext().year
+  const dueDate = new Date(
+    year,
+    monthIndex === -1 ? getCurrentMonthContext().monthIndex : monthIndex,
+    getExpenseDayOfMonth(expense)
+  )
+  const today = new Date()
+  const todayStart = new Date(
+    today.getFullYear(),
+    today.getMonth(),
+    today.getDate()
+  )
 
-  return dueDate < todayStart;
+  return dueDate < todayStart
 }
 
 function buildDueLabel({ frequency, dayOfMonth, month, urgent, completed }) {
-  const dayPart = `Оплата ${dayOfMonth} числа`;
+  const dayPart = `Оплата ${dayOfMonth} числа`
   const baseLabel =
     frequency === "Раз в год"
       ? `Раз в год - ${month}, ${dayPart}`
       : frequency === "Единоразово"
         ? `Единоразово - ${month}, ${dayPart}`
-        : dayPart;
+        : dayPart
 
   if (completed || !urgent) {
-    return baseLabel;
+    return baseLabel
   }
 
-  return `Проверь! - ${baseLabel}`;
+  return `Проверь! - ${baseLabel}`
 }
 
 function getCurrentMonthContext() {
-  const now = new Date();
-  return buildMonthContext(now.getFullYear(), fullMonthNames[now.getMonth()]);
+  const now = new Date()
+  return buildMonthContext(now.getFullYear(), fullMonthNames[now.getMonth()])
 }
 
 function getNextMonthContext(context) {
-  const nextMonthIndex = (context.monthIndex + 1) % 12;
+  const nextMonthIndex = (context.monthIndex + 1) % 12
 
   return {
     monthIndex: nextMonthIndex,
     monthName: fullMonthNames[nextMonthIndex],
     monthShort: monthOptions[nextMonthIndex],
     year: context.year + (context.monthIndex === 11 ? 1 : 0),
-  };
+  }
 }
 
+const {
+  ensureHouseholdRecord,
+  persistBudgetSnapshotToSupabase,
+  loadBudgetSnapshotFromSupabase,
+} = createBudgetRepository({
+  defaultHouseholdName: DEFAULT_HOUSEHOLD_NAME,
+  payerOptions,
+  getAuthUserDisplayName,
+  getAuthUserAvatar,
+  dedupeRegularTemplates,
+  isValidRegularTemplate,
+  getDefaultCategoryColor,
+  buildSqlDate,
+  uiFrequencyToDb,
+  dbFrequencyToUi,
+  getMonthNumberFromValue,
+  getMonthShortByNumber,
+  getMonthNameByNumber,
+  parseSqlDateParts,
+  normalizeOwnerName,
+  normalizePayerName,
+  detectFrequency,
+  getExpensePayer,
+  getExpenseOwner,
+  getExpenseDayOfMonth,
+  getCurrentMonthContext,
+  buildDueLabel,
+})
+
 function getMonthIndexByValue(value) {
-  return fullMonthNames.findIndex((monthName) => monthName === normalizeMonthName(value));
+  return getBudgetMonthIndexByValue(value, getDefaultBudgetMonthName())
 }
 
 function getPeriodOrderKey(year, monthValue) {
-  return year * 12 + Math.max(getMonthIndexByValue(monthValue), 0);
+  return year * 12 + Math.max(getMonthIndexByValue(monthValue), 0)
 }
 
 function formatMonthYearLabel(monthName, year) {
-  return `${monthName} ${year}`;
+  return `${monthName} ${year}`
 }
 
 function formatMonthYearGenitive(monthName, year) {
-  const monthIndex = fullMonthNames.findIndex((item) => item === monthName);
-  return `${monthNamesGenitive[monthIndex] ?? monthName.toLowerCase()} ${year}`;
+  const monthIndex = fullMonthNames.findIndex((item) => item === monthName)
+  return `${monthNamesGenitive[monthIndex] ?? monthName.toLowerCase()} ${year}`
 }
 
 function formatSqlDateHuman(sqlDate) {
   if (!sqlDate) {
-    return "";
+    return ""
   }
 
-  const [year, month, day] = String(sqlDate).split("-").map((item) => Number(item));
+  const [year, month, day] = String(sqlDate)
+    .split("-")
+    .map((item) => Number(item))
   if (!year || !month || !day) {
-    return String(sqlDate);
+    return String(sqlDate)
   }
 
-  const monthName = monthNamesGenitive[month - 1] ?? "";
-  return `${day} ${monthName} ${year}`;
+  const monthName = monthNamesGenitive[month - 1] ?? ""
+  return `${day} ${monthName} ${year}`
 }
 
 function formatAmountProgress(current, target, suffix = "Kč") {
-  return `${formatCurrency(current)} из ${formatCurrency(target)} ${suffix}`;
+  return `${formatCurrency(current)} из ${formatCurrency(target)} ${suffix}`
 }
 
 function normalizeMonthName(value) {
-  if (!value) {
-    return getCurrentMonthContext().monthName;
-  }
-
-  const directMatch = monthMeta.find((month) => month.name === value || month.short === value);
-  return directMatch ? directMatch.name : getCurrentMonthContext().monthName;
+  return normalizeBudgetMonthName(value, getDefaultBudgetMonthName())
 }
 
 function getMonthMetaByName(name) {
-  return monthMeta.find((month) => month.name === name) ?? monthMeta[0];
+  return monthMeta.find((month) => month.name === name) ?? monthMeta[0]
 }
 
 function getInitialMembers() {
   if (typeof window === "undefined") {
-    return createEmptyMembers();
+    return createEmptyMembers()
   }
 
-  if (isSupabaseConfigured) {
-    return createEmptyMembers();
+  if (shouldUseSupabaseStorage()) {
+    return createEmptyMembers()
   }
 
-  preparePrototypeStorage();
+  preparePrototypeStorage()
 
   try {
-    const savedMembers = window.localStorage.getItem(STORAGE_KEY);
-    return savedMembers ? JSON.parse(savedMembers) : createEmptyMembers();
+    const savedMembers = window.localStorage.getItem(STORAGE_KEY)
+    return savedMembers ? JSON.parse(savedMembers) : createEmptyMembers()
   } catch {
-    return createEmptyMembers();
+    return createEmptyMembers()
   }
 }
 
 function getInitialCategories() {
   if (typeof window === "undefined") {
-    return initialCategories;
+    return initialCategories
   }
 
-  if (isSupabaseConfigured) {
-    return initialCategories.map((category, index) => ensureCategoryColor(category, index));
+  if (shouldUseSupabaseStorage()) {
+    return initialCategories.map((category, index) =>
+      ensureCategoryColor(category, index)
+    )
   }
 
-  preparePrototypeStorage();
+  preparePrototypeStorage()
 
   try {
-    const savedCategories = window.localStorage.getItem(CATEGORY_STORAGE_KEY);
-    const parsedCategories = savedCategories ? JSON.parse(savedCategories) : initialCategories;
-    const needsColorReset = window.localStorage.getItem(CATEGORY_ICON_COLOR_MIGRATION_KEY) !== "done";
+    const savedCategories = window.localStorage.getItem(CATEGORY_STORAGE_KEY)
+    const parsedCategories = savedCategories
+      ? JSON.parse(savedCategories)
+      : initialCategories
+    const needsColorReset =
+      window.localStorage.getItem(CATEGORY_ICON_COLOR_MIGRATION_KEY) !== "done"
 
     if (needsColorReset) {
       const recoloredCategories = parsedCategories.map((category, index) => ({
         ...category,
         color: getDefaultCategoryColor(category.icon, index),
-      }));
+      }))
 
-      window.localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(recoloredCategories));
-      window.localStorage.setItem(CATEGORY_ICON_COLOR_MIGRATION_KEY, "done");
+      window.localStorage.setItem(
+        CATEGORY_STORAGE_KEY,
+        JSON.stringify(recoloredCategories)
+      )
+      window.localStorage.setItem(CATEGORY_ICON_COLOR_MIGRATION_KEY, "done")
 
-      return recoloredCategories;
+      return recoloredCategories
     }
 
-    return parsedCategories.map((category, index) => ensureCategoryColor(category, index));
+    return parsedCategories.map((category, index) =>
+      ensureCategoryColor(category, index)
+    )
   } catch {
-    return initialCategories.map((category, index) => ensureCategoryColor(category, index));
+    return initialCategories.map((category, index) =>
+      ensureCategoryColor(category, index)
+    )
   }
 }
 
 function SegmentGroup({ options, value, onChange, variant = "default" }) {
   return (
-    <div className={variant === "category" ? "segment-group category-group" : "segment-group"}>
+    <div
+      className={
+        variant === "category"
+          ? "segment-group category-group"
+          : "segment-group"
+      }
+    >
       {options.map((option) => (
         <button
           key={option}
@@ -3193,11 +3330,11 @@ function SegmentGroup({ options, value, onChange, variant = "default" }) {
         </button>
       ))}
     </div>
-  );
+  )
 }
 
 function ProgressBar({ paid, budget }) {
-  const progress = Math.min((paid / budget) * 100, 100);
+  const progress = Math.min((paid / budget) * 100, 100)
 
   return (
     <div className="progress-block">
@@ -3209,40 +3346,64 @@ function ProgressBar({ paid, budget }) {
         <div className="progress-fill" style={{ width: `${progress}%` }} />
       </div>
     </div>
-  );
+  )
 }
 
 function isExpenseRegularForBoard(expense) {
-  const frequency = expense.frequency ?? detectFrequency(expense);
-  return frequency === "Каждый месяц" || frequency === "Раз в год" || Boolean(expense.templateId);
+  const frequency = expense.frequency ?? detectFrequency(expense)
+  return (
+    frequency === "Каждый месяц" ||
+    frequency === "Раз в год" ||
+    Boolean(expense.templateId)
+  )
 }
 
 function buildMonthFinancialSummary({ expenses, incomeTotal }) {
-  const totalBudget = expenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
+  const totalBudget = expenses.reduce(
+    (sum, expense) => sum + Number(expense.amount ?? 0),
+    0
+  )
   const baseBudget = expenses
     .filter((expense) => isExpenseRegularForBoard(expense))
-    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
-  const addedBudget = Math.max(totalBudget - baseBudget, 0);
+    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0)
+  const addedBudget = Math.max(totalBudget - baseBudget, 0)
   const romaPayerBudget = expenses
-    .filter((expense) => normalizePayerName(getExpensePayer(expense)) === "Рома")
-    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
+    .filter(
+      (expense) => normalizePayerName(getExpensePayer(expense)) === "Рома"
+    )
+    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0)
   const sashaPayerBudget = expenses
-    .filter((expense) => normalizePayerName(getExpensePayer(expense)) === "Саша")
-    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
+    .filter(
+      (expense) => normalizePayerName(getExpensePayer(expense)) === "Саша"
+    )
+    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0)
   const romaOwnerBudget = expenses
-    .filter((expense) => normalizeOwnerName(expense.owner, getExpensePayer(expense)) === "Рома")
-    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
+    .filter(
+      (expense) =>
+        normalizeOwnerName(expense.owner, getExpensePayer(expense)) === "Рома"
+    )
+    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0)
   const sharedOwnerBudget = expenses
-    .filter((expense) => normalizeOwnerName(expense.owner, getExpensePayer(expense)) === "Общее")
-    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
+    .filter(
+      (expense) =>
+        normalizeOwnerName(expense.owner, getExpensePayer(expense)) === "Общее"
+    )
+    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0)
   const sashaOwnerBudget = expenses
-    .filter((expense) => normalizeOwnerName(expense.owner, getExpensePayer(expense)) === "Саша")
-    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
-  const safeIncome = Math.max(Number(incomeTotal) || 0, 0);
-  const profit = safeIncome - totalBudget;
-  const hasIncomeData = safeIncome > 0;
-  const expenseCoverage = safeIncome > 0 ? Math.min((totalBudget / safeIncome) * 100, 100) : 0;
-  const profitShare = safeIncome > totalBudget && safeIncome > 0 ? Math.max(100 - expenseCoverage, 0) : 0;
+    .filter(
+      (expense) =>
+        normalizeOwnerName(expense.owner, getExpensePayer(expense)) === "Саша"
+    )
+    .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0)
+  const safeIncome = Math.max(Number(incomeTotal) || 0, 0)
+  const profit = safeIncome - totalBudget
+  const hasIncomeData = safeIncome > 0
+  const expenseCoverage =
+    safeIncome > 0 ? Math.min((totalBudget / safeIncome) * 100, 100) : 0
+  const profitShare =
+    safeIncome > totalBudget && safeIncome > 0
+      ? Math.max(100 - expenseCoverage, 0)
+      : 0
 
   return {
     incomeTotal: safeIncome,
@@ -3258,7 +3419,7 @@ function buildMonthFinancialSummary({ expenses, incomeTotal }) {
     hasIncomeData,
     budgetShare: expenseCoverage,
     profitShare,
-  };
+  }
 }
 
 const monthIncomeLabelMap = {
@@ -3274,30 +3435,44 @@ const monthIncomeLabelMap = {
   Октябрь: "Доход в октябре",
   Ноябрь: "Доход в ноябре",
   Декабрь: "Доход в декабре",
-};
+}
 
 function MonthFinancialBoard({ monthLabel, monthMeta, summary }) {
-  const monthMatch = monthLabel.match(/^(.+?)\s+(\d{4})$/u);
-  const monthName = monthMatch?.[1] ?? monthLabel;
-  const monthYear = monthMatch?.[2] ?? "";
-  const resultLabel = summary.profit >= 0 ? "Прибыль месяца" : "Дефицит месяца";
-  const incomeLabel = monthIncomeLabelMap[monthName] ?? "Доход месяца";
-  const budgetShare = summary.budgetShare ?? 0;
-  const profitShare = summary.profitShare ?? 0;
+  const monthMatch = monthLabel.match(/^(.+?)\s+(\d{4})$/u)
+  const monthName = monthMatch?.[1] ?? monthLabel
+  const monthYear = monthMatch?.[2] ?? ""
+  const resultLabel = summary.profit >= 0 ? "Прибыль месяца" : "Дефицит месяца"
+  const incomeLabel = monthIncomeLabelMap[monthName] ?? "Доход месяца"
+  const budgetShare = summary.budgetShare ?? 0
+  const profitShare = summary.profitShare ?? 0
   const regularBudgetShare =
-    summary.totalBudget > 0 ? (summary.baseBudget / summary.totalBudget) * 100 : 0;
+    summary.totalBudget > 0
+      ? (summary.baseBudget / summary.totalBudget) * 100
+      : 0
   const addedBudgetShare =
-    summary.totalBudget > 0 ? (summary.addedBudget / summary.totalBudget) * 100 : 0;
+    summary.totalBudget > 0
+      ? (summary.addedBudget / summary.totalBudget) * 100
+      : 0
   const romaPayerShare =
-    summary.totalBudget > 0 ? (summary.romaPayerBudget / summary.totalBudget) * 100 : 0;
+    summary.totalBudget > 0
+      ? (summary.romaPayerBudget / summary.totalBudget) * 100
+      : 0
   const sashaPayerShare =
-    summary.totalBudget > 0 ? (summary.sashaPayerBudget / summary.totalBudget) * 100 : 0;
+    summary.totalBudget > 0
+      ? (summary.sashaPayerBudget / summary.totalBudget) * 100
+      : 0
   const romaOwnerShare =
-    summary.totalBudget > 0 ? (summary.romaOwnerBudget / summary.totalBudget) * 100 : 0;
+    summary.totalBudget > 0
+      ? (summary.romaOwnerBudget / summary.totalBudget) * 100
+      : 0
   const sharedOwnerShare =
-    summary.totalBudget > 0 ? (summary.sharedOwnerBudget / summary.totalBudget) * 100 : 0;
+    summary.totalBudget > 0
+      ? (summary.sharedOwnerBudget / summary.totalBudget) * 100
+      : 0
   const sashaOwnerShare =
-    summary.totalBudget > 0 ? (summary.sashaOwnerBudget / summary.totalBudget) * 100 : 0;
+    summary.totalBudget > 0
+      ? (summary.sashaOwnerBudget / summary.totalBudget) * 100
+      : 0
 
   return (
     <section className="card month-financial-card">
@@ -3305,7 +3480,9 @@ function MonthFinancialBoard({ monthLabel, monthMeta, summary }) {
         <div className="month-financial-month">
           <div className="month-financial-month-copy">
             <div className="month-financial-month-name">{monthName}</div>
-            {monthYear ? <div className="month-financial-month-year">{monthYear}</div> : null}
+            {monthYear ? (
+              <div className="month-financial-month-year">{monthYear}</div>
+            ) : null}
           </div>
         </div>
         <div className="month-financial-budget-head">
@@ -3342,7 +3519,10 @@ function MonthFinancialBoard({ monthLabel, monthMeta, summary }) {
               </div>
             </div>
 
-            <div className="month-financial-bar" aria-label="Бюджет и прибыль относительно дохода">
+            <div
+              className="month-financial-bar"
+              aria-label="Бюджет и прибыль относительно дохода"
+            >
               <div
                 className="month-financial-bar-segment month-financial-bar-segment-budget"
                 style={{ width: `${budgetShare}%` }}
@@ -3375,7 +3555,10 @@ function MonthFinancialBoard({ monthLabel, monthMeta, summary }) {
               </div>
             </div>
 
-            <div className="month-financial-bar" aria-label="Регулярные и добавленные траты">
+            <div
+              className="month-financial-bar"
+              aria-label="Регулярные и добавленные траты"
+            >
               <div
                 className="month-financial-bar-segment month-financial-bar-segment-regular"
                 style={{ width: `${regularBudgetShare}%` }}
@@ -3408,7 +3591,10 @@ function MonthFinancialBoard({ monthLabel, monthMeta, summary }) {
               </div>
             </div>
 
-            <div className="month-financial-bar" aria-label="Кто оплачивает бюджет месяца">
+            <div
+              className="month-financial-bar"
+              aria-label="Кто оплачивает бюджет месяца"
+            >
               <div
                 className="month-financial-bar-segment month-financial-bar-segment-payer-roma"
                 style={{ width: `${romaPayerShare}%` }}
@@ -3447,7 +3633,10 @@ function MonthFinancialBoard({ monthLabel, monthMeta, summary }) {
               </div>
             </div>
 
-            <div className="month-financial-bar" aria-label="Ромино, общее и Сашино">
+            <div
+              className="month-financial-bar"
+              aria-label="Ромино, общее и Сашино"
+            >
               <div
                 className="month-financial-bar-segment month-financial-bar-segment-owner-roma"
                 style={{ width: `${romaOwnerShare}%` }}
@@ -3470,23 +3659,39 @@ function MonthFinancialBoard({ monthLabel, monthMeta, summary }) {
       ) : (
         <div className="month-financial-empty">
           <strong>Доходы месяца ещё не добавлены.</strong>
-          <span>Добавь ожидаемые или фактические доходы, чтобы увидеть финансовую картину месяца.</span>
+          <span>
+            Добавь ожидаемые или фактические доходы, чтобы увидеть финансовую
+            картину месяца.
+          </span>
         </div>
       )}
     </section>
-  );
+  )
 }
 
-function MobileMonthSwitcher({ previousMonth, nextMonth, onOpenMonth, onOpenAllMonths }) {
+function MobileMonthSwitcher({
+  previousMonth,
+  nextMonth,
+  onOpenMonth,
+  onOpenAllMonths,
+  className = "",
+}) {
   return (
-    <div className="mobile-month-switcher">
+    <div className={`mobile-month-switcher ${className}`.trim()}>
       <button
         className="mobile-month-switcher-button mobile-month-switcher-button-prev"
         type="button"
         onClick={() => onOpenMonth(previousMonth)}
       >
-        <img className="mobile-month-switcher-arrow" src={arrowIcon} alt="" aria-hidden="true" />
-        <span className="mobile-month-switcher-label">{previousMonth.monthName}</span>
+        <img
+          className="mobile-month-switcher-arrow"
+          src={arrowIcon}
+          alt=""
+          aria-hidden="true"
+        />
+        <span className="mobile-month-switcher-label">
+          {previousMonth.monthName}
+        </span>
       </button>
 
       <button
@@ -3495,7 +3700,9 @@ function MobileMonthSwitcher({ previousMonth, nextMonth, onOpenMonth, onOpenAllM
         aria-label="Все месяцы"
         onClick={onOpenAllMonths}
       >
-        <span className="mobile-month-switcher-calendar" aria-hidden="true">📅</span>
+        <span className="mobile-month-switcher-calendar" aria-hidden="true">
+          📅
+        </span>
       </button>
 
       <button
@@ -3503,7 +3710,9 @@ function MobileMonthSwitcher({ previousMonth, nextMonth, onOpenMonth, onOpenAllM
         type="button"
         onClick={() => onOpenMonth(nextMonth)}
       >
-        <span className="mobile-month-switcher-label">{nextMonth.monthName}</span>
+        <span className="mobile-month-switcher-label">
+          {nextMonth.monthName}
+        </span>
         <img
           className="mobile-month-switcher-arrow mobile-month-switcher-arrow-next"
           src={arrowIcon}
@@ -3512,24 +3721,28 @@ function MobileMonthSwitcher({ previousMonth, nextMonth, onOpenMonth, onOpenAllM
         />
       </button>
     </div>
-  );
+  )
 }
 
-function buildCategoryBreakdownFromExpenses(expenses, categories, totalBudget = null) {
-  const totalsByCategory = new Map();
+function buildCategoryBreakdownFromExpenses(
+  expenses,
+  categories,
+  totalBudget = null
+) {
+  const totalsByCategory = new Map()
 
   expenses.forEach((expense) => {
-    const currentTotal = totalsByCategory.get(expense.category) ?? 0;
-    totalsByCategory.set(expense.category, currentTotal + expense.amount);
-  });
+    const currentTotal = totalsByCategory.get(expense.category) ?? 0
+    totalsByCategory.set(expense.category, currentTotal + expense.amount)
+  })
 
   const resolvedTotal =
-    totalBudget ?? expenses.reduce((sum, expense) => sum + expense.amount, 0);
+    totalBudget ?? expenses.reduce((sum, expense) => sum + expense.amount, 0)
 
   return [...totalsByCategory.entries()]
     .map(([label, amount]) => {
-      const category = categories.find((item) => item.label === label);
-      const share = resolvedTotal > 0 ? (amount / resolvedTotal) * 100 : 0;
+      const category = categories.find((item) => item.label === label)
+      const share = resolvedTotal > 0 ? (amount / resolvedTotal) * 100 : 0
 
       return {
         label,
@@ -3537,74 +3750,107 @@ function buildCategoryBreakdownFromExpenses(expenses, categories, totalBudget = 
         share,
         color: getCategoryColor(label, categories),
         icon: category?.icon ?? "•",
-      };
+      }
     })
-    .sort((left, right) => right.amount - left.amount);
+    .sort((left, right) => right.amount - left.amount)
 }
 
 function buildGenericBreakdown(items, totalAmount = null) {
   const resolvedTotal =
-    totalAmount ?? items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
+    totalAmount ??
+    items.reduce((sum, item) => sum + Number(item.amount ?? 0), 0)
 
   return items
     .map((item) => ({
       ...item,
       amount: Number(item.amount ?? 0),
-      share: resolvedTotal > 0 ? (Number(item.amount ?? 0) / resolvedTotal) * 100 : 0,
+      share:
+        resolvedTotal > 0
+          ? (Number(item.amount ?? 0) / resolvedTotal) * 100
+          : 0,
     }))
     .filter((item) => item.amount > 0)
-    .sort((left, right) => right.amount - left.amount);
+    .sort((left, right) => right.amount - left.amount)
 }
 
 function buildOwnerBreakdownFromExpenses(expenses, totalBudget = null) {
-  const filteredExpenses = expenses.filter((expense) => expense.category !== "OSVC");
+  const filteredExpenses = expenses.filter(
+    (expense) => expense.category !== "OSVC"
+  )
   const totals = {
     common: 0,
     roma: 0,
     sasha: 0,
-  };
+  }
 
   filteredExpenses.forEach((expense) => {
-    const normalizedOwner = normalizeOwnerName(expense.owner, getExpensePayer(expense));
+    const normalizedOwner = normalizeOwnerName(
+      expense.owner,
+      getExpensePayer(expense)
+    )
     if (normalizedOwner === "Рома") {
-      totals.roma += expense.amount;
-      return;
+      totals.roma += expense.amount
+      return
     }
 
     if (normalizedOwner === "Саша") {
-      totals.sasha += expense.amount;
-      return;
+      totals.sasha += expense.amount
+      return
     }
 
-    totals.common += expense.amount;
-  });
+    totals.common += expense.amount
+  })
 
   return buildGenericBreakdown(
     [
-      { key: "common", label: "Общие расходы", shortLabel: "Общие", amount: totals.common, color: "#d7b26d", icon: "◎" },
-      { key: "roma", label: "Ромины личные", shortLabel: "Рома", amount: totals.roma, color: "#5da274", icon: "◐" },
-      { key: "sasha", label: "Сашины личные", shortLabel: "Саша", amount: totals.sasha, color: "#7796d1", icon: "◑" },
+      {
+        key: "common",
+        label: "Общие расходы",
+        shortLabel: "Общие",
+        amount: totals.common,
+        color: "#d7b26d",
+        icon: "◎",
+      },
+      {
+        key: "roma",
+        label: "Ромины личные",
+        shortLabel: "Рома",
+        amount: totals.roma,
+        color: "#5da274",
+        icon: "◐",
+      },
+      {
+        key: "sasha",
+        label: "Сашины личные",
+        shortLabel: "Саша",
+        amount: totals.sasha,
+        color: "#7796d1",
+        icon: "◑",
+      },
     ],
-    totalBudget ?? filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0),
-  );
+    totalBudget ??
+      filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0)
+  )
 }
 
 function buildRegularityBreakdownFromExpenses(expenses, totalBudget = null) {
-  const filteredExpenses = expenses.filter((expense) => expense.category !== "OSVC");
+  const filteredExpenses = expenses.filter(
+    (expense) => expense.category !== "OSVC"
+  )
   const totals = {
     regular: 0,
     irregular: 0,
-  };
+  }
 
   filteredExpenses.forEach((expense) => {
-    const isRegular = Boolean(expense.templateId || expense.sourceExpenseId);
+    const isRegular = Boolean(expense.templateId || expense.sourceExpenseId)
     if (isRegular) {
-      totals.regular += expense.amount;
-      return;
+      totals.regular += expense.amount
+      return
     }
 
-    totals.irregular += expense.amount;
-  });
+    totals.irregular += expense.amount
+  })
 
   return buildGenericBreakdown(
     [
@@ -3625,8 +3871,9 @@ function buildRegularityBreakdownFromExpenses(expenses, totalBudget = null) {
         icon: "＋",
       },
     ],
-    totalBudget ?? filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0),
-  );
+    totalBudget ??
+      filteredExpenses.reduce((sum, expense) => sum + expense.amount, 0)
+  )
 }
 
 function CategoryBreakdownCard({
@@ -3636,15 +3883,23 @@ function CategoryBreakdownCard({
   title = "Структура бюджета",
   barLabel = "Распределение бюджета по категориям",
 }) {
-  const [activeTooltip, setActiveTooltip] = useState(null);
-  const [showAllCategories, setShowAllCategories] = useState(false);
+  const [activeTooltip, setActiveTooltip] = useState(null)
+  const [showAllCategories, setShowAllCategories] = useState(false)
 
   return (
-    <section className={showAllCategories ? "card category-breakdown-card expanded" : "card category-breakdown-card"}>
+    <section
+      className={
+        showAllCategories
+          ? "card category-breakdown-card expanded"
+          : "card category-breakdown-card"
+      }
+    >
       <p className="eyebrow">{eyebrow}</p>
       <div className="category-breakdown-head">
         <h2>{title}</h2>
-        <div className="category-breakdown-total">{formatCurrency(total)} Kč</div>
+        <div className="category-breakdown-total">
+          {formatCurrency(total)} Kč
+        </div>
       </div>
 
       <div className="category-breakdown-bar-wrap">
@@ -3656,10 +3911,22 @@ function CategoryBreakdownCard({
               type="button"
               style={{ width: `${item.share}%`, background: item.color }}
               onMouseEnter={() => setActiveTooltip(item.label)}
-              onMouseLeave={() => setActiveTooltip((current) => (current === item.label ? null : current))}
+              onMouseLeave={() =>
+                setActiveTooltip((current) =>
+                  current === item.label ? null : current
+                )
+              }
               onFocus={() => setActiveTooltip(item.label)}
-              onBlur={() => setActiveTooltip((current) => (current === item.label ? null : current))}
-              onClick={() => setActiveTooltip((current) => (current === item.label ? null : item.label))}
+              onBlur={() =>
+                setActiveTooltip((current) =>
+                  current === item.label ? null : current
+                )
+              }
+              onClick={() =>
+                setActiveTooltip((current) =>
+                  current === item.label ? null : item.label
+                )
+              }
               aria-label={`${item.label}: ${Math.round(item.share)}%, ${formatCurrency(item.amount)} Kč`}
             />
           ))}
@@ -3667,9 +3934,9 @@ function CategoryBreakdownCard({
         {activeTooltip ? (
           <div className="category-breakdown-tooltip" role="status">
             {(() => {
-              const item = items.find((entry) => entry.label === activeTooltip);
+              const item = items.find((entry) => entry.label === activeTooltip)
               if (!item) {
-                return null;
+                return null
               }
 
               return (
@@ -3680,7 +3947,7 @@ function CategoryBreakdownCard({
                   <span>{Math.round(item.share)}%</span>
                   <span>{formatCurrency(item.amount)} Kč</span>
                 </>
-              );
+              )
             })()}
           </div>
         ) : null}
@@ -3690,14 +3957,21 @@ function CategoryBreakdownCard({
         {items.map((item) => (
           <div key={item.label} className="category-breakdown-row">
             <div className="category-breakdown-main">
-              <span className="category-breakdown-swatch" style={{ background: item.color }} />
+              <span
+                className="category-breakdown-swatch"
+                style={{ background: item.color }}
+              />
               <span className="category-breakdown-label">
                 {item.icon} {item.label}
               </span>
             </div>
             <div className="category-breakdown-values">
-              <span className="category-breakdown-percent">{Math.round(item.share)}%</span>
-              <strong className="category-breakdown-amount">{formatCurrency(item.amount)} Kč</strong>
+              <span className="category-breakdown-percent">
+                {Math.round(item.share)}%
+              </span>
+              <strong className="category-breakdown-amount">
+                {formatCurrency(item.amount)} Kč
+              </strong>
             </div>
           </div>
         ))}
@@ -3709,42 +3983,62 @@ function CategoryBreakdownCard({
           type="button"
           onClick={() => setShowAllCategories((current) => !current)}
         >
-          {showAllCategories ? "Скрыть категории" : `Показать ещё ${items.length - 5}`}
+          {showAllCategories
+            ? "Скрыть категории"
+            : `Показать ещё ${items.length - 5}`}
         </button>
       ) : null}
     </section>
-  );
+  )
 }
 
-function AnalyticsRingCard({ eyebrow, title, total = null, items, emptyText, note = null }) {
-  const normalizedItems = items.filter((item) => item.amount > 0);
+function AnalyticsRingCard({
+  eyebrow,
+  title,
+  total = null,
+  items,
+  emptyText,
+  note = null,
+}) {
+  const normalizedItems = items.filter((item) => item.amount > 0)
   const resolvedTotal =
-    total ?? normalizedItems.reduce((sum, item) => sum + Number(item.amount ?? 0), 0);
-  const [activeKey, setActiveKey] = useState(null);
-  const [tooltipPosition, setTooltipPosition] = useState({ x: 94, y: 94 });
-  const ringRadius = 42;
-  const circumference = 2 * Math.PI * ringRadius;
-  let strokeOffsetAccumulator = 0;
-  const activeItem = normalizedItems.find((item) => (item.key ?? item.label) === activeKey) ?? null;
+    total ??
+    normalizedItems.reduce((sum, item) => sum + Number(item.amount ?? 0), 0)
+  const [activeKey, setActiveKey] = useState(null)
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 94, y: 94 })
+  const ringRadius = 42
+  const circumference = 2 * Math.PI * ringRadius
+  let strokeOffsetAccumulator = 0
+  const activeItem =
+    normalizedItems.find((item) => (item.key ?? item.label) === activeKey) ??
+    null
 
   const updateTooltipPosition = (event) => {
-    const chartElement = event.currentTarget.closest(".analytics-ring-chart");
-    const bounds = chartElement?.getBoundingClientRect();
+    const chartElement = event.currentTarget.closest(".analytics-ring-chart")
+    const bounds = chartElement?.getBoundingClientRect()
     if (!bounds) {
-      return;
+      return
     }
 
-    const nextX = Math.max(26, Math.min(bounds.width - 26, event.clientX - bounds.left));
-    const nextY = Math.max(26, Math.min(bounds.height - 26, event.clientY - bounds.top));
-    setTooltipPosition({ x: nextX, y: nextY });
-  };
+    const nextX = Math.max(
+      26,
+      Math.min(bounds.width - 26, event.clientX - bounds.left)
+    )
+    const nextY = Math.max(
+      26,
+      Math.min(bounds.height - 26, event.clientY - bounds.top)
+    )
+    setTooltipPosition({ x: nextX, y: nextY })
+  }
 
   return (
     <section className="card analytics-ring-card">
       <p className="eyebrow">{eyebrow}</p>
       <div className="category-breakdown-head">
         <h2>{title}</h2>
-        <div className="category-breakdown-total">{formatCurrency(resolvedTotal)} Kč</div>
+        <div className="category-breakdown-total">
+          {formatCurrency(resolvedTotal)} Kč
+        </div>
       </div>
       {note ? <p className="analytics-ring-note">{note}</p> : null}
 
@@ -3765,16 +4059,23 @@ function AnalyticsRingCard({ eyebrow, title, total = null, items, emptyText, not
                 />
                 <g transform="rotate(-90 50 50)">
                   {normalizedItems.map((item) => {
-                    const exactRatio = resolvedTotal > 0 ? Number(item.amount ?? 0) / resolvedTotal : 0;
-                    const segmentLength = exactRatio * circumference;
-                    const currentOffset = strokeOffsetAccumulator;
-                    strokeOffsetAccumulator += segmentLength;
-                    const itemKey = item.key ?? item.label;
+                    const exactRatio =
+                      resolvedTotal > 0
+                        ? Number(item.amount ?? 0) / resolvedTotal
+                        : 0
+                    const segmentLength = exactRatio * circumference
+                    const currentOffset = strokeOffsetAccumulator
+                    strokeOffsetAccumulator += segmentLength
+                    const itemKey = item.key ?? item.label
 
                     return (
                       <circle
                         key={itemKey}
-                        className={activeKey === itemKey ? "analytics-ring-segment active" : "analytics-ring-segment"}
+                        className={
+                          activeKey === itemKey
+                            ? "analytics-ring-segment active"
+                            : "analytics-ring-segment"
+                        }
                         cx="50"
                         cy="50"
                         r={ringRadius}
@@ -3787,22 +4088,32 @@ function AnalyticsRingCard({ eyebrow, title, total = null, items, emptyText, not
                         role="button"
                         aria-label={`${item.label}: ${Math.round(item.share)}%, ${formatCurrency(item.amount)} Kč`}
                         onMouseEnter={(event) => {
-                          updateTooltipPosition(event);
-                          setActiveKey(itemKey);
+                          updateTooltipPosition(event)
+                          setActiveKey(itemKey)
                         }}
                         onMouseMove={updateTooltipPosition}
-                        onMouseLeave={() => setActiveKey((current) => (current === itemKey ? null : current))}
+                        onMouseLeave={() =>
+                          setActiveKey((current) =>
+                            current === itemKey ? null : current
+                          )
+                        }
                         onFocus={() => {
-                          setTooltipPosition({ x: 94, y: 94 });
-                          setActiveKey(itemKey);
+                          setTooltipPosition({ x: 94, y: 94 })
+                          setActiveKey(itemKey)
                         }}
-                        onBlur={() => setActiveKey((current) => (current === itemKey ? null : current))}
+                        onBlur={() =>
+                          setActiveKey((current) =>
+                            current === itemKey ? null : current
+                          )
+                        }
                         onClick={(event) => {
-                          updateTooltipPosition(event);
-                          setActiveKey((current) => (current === itemKey ? null : itemKey));
+                          updateTooltipPosition(event)
+                          setActiveKey((current) =>
+                            current === itemKey ? null : itemKey
+                          )
                         }}
                       />
-                    );
+                    )
                   })}
                 </g>
               </svg>
@@ -3815,7 +4126,10 @@ function AnalyticsRingCard({ eyebrow, title, total = null, items, emptyText, not
               <div
                 className="analytics-ring-tooltip"
                 role="status"
-                style={{ left: `${tooltipPosition.x}px`, top: `${tooltipPosition.y}px` }}
+                style={{
+                  left: `${tooltipPosition.x}px`,
+                  top: `${tooltipPosition.y}px`,
+                }}
               >
                 <strong>
                   {activeItem.icon} {activeItem.label}
@@ -3830,16 +4144,25 @@ function AnalyticsRingCard({ eyebrow, title, total = null, items, emptyText, not
             {normalizedItems.map((item) => (
               <div
                 key={item.key ?? item.label}
-                className={activeKey === (item.key ?? item.label) ? "category-breakdown-row active" : "category-breakdown-row"}
+                className={
+                  activeKey === (item.key ?? item.label)
+                    ? "category-breakdown-row active"
+                    : "category-breakdown-row"
+                }
               >
                 <div className="category-breakdown-main">
-                  <span className="category-breakdown-swatch" style={{ background: item.color }} />
+                  <span
+                    className="category-breakdown-swatch"
+                    style={{ background: item.color }}
+                  />
                   <span className="category-breakdown-label">
                     {item.icon} {item.label}
                   </span>
                 </div>
                 <div className="category-breakdown-values annual-outcome-values">
-                  <strong className="category-breakdown-amount">{formatCurrency(item.amount)} Kč</strong>
+                  <strong className="category-breakdown-amount">
+                    {formatCurrency(item.amount)} Kč
+                  </strong>
                 </div>
               </div>
             ))}
@@ -3849,31 +4172,31 @@ function AnalyticsRingCard({ eyebrow, title, total = null, items, emptyText, not
         <p className="analytics-ring-empty">{emptyText}</p>
       )}
     </section>
-  );
+  )
 }
 
 function formatCadenceLabel(cadence) {
-  return cadence === "auto" ? "Автоматическая" : "Ручная";
+  return cadence === "auto" ? "Автоматическая" : "Ручная"
 }
 
 function detectFrequency(expense) {
   if (expense.dueLabel.includes("Раз в год")) {
-    return "Раз в год";
+    return "Раз в год"
   }
 
   if (expense.dueLabel.includes("Единоразово")) {
-    return "Единоразово";
+    return "Единоразово"
   }
 
-  return "Каждый месяц";
+  return "Каждый месяц"
 }
 
 function getCompactDueLabel(label) {
   if (!label) {
-    return "";
+    return ""
   }
 
-  return label.replace(/^Оплата\s+/i, "");
+  return label.replace(/^Оплата\s+/i, "")
 }
 
 function BudgetDataRow({
@@ -3894,30 +4217,60 @@ function BudgetDataRow({
   titleClassName = "",
   rowClassName = "",
 }) {
-  const compactDueLabel = getCompactDueLabel(dueLabel);
+  const compactDueLabel = getCompactDueLabel(dueLabel)
 
   return (
-    <div className={leading ? `budget-data-row has-leading ${rowClassName}` : `budget-data-row ${rowClassName}`}>
+    <div
+      className={
+        leading
+          ? `budget-data-row has-leading ${rowClassName}`
+          : `budget-data-row ${rowClassName}`
+      }
+    >
       {leading ? <div className="budget-data-leading">{leading}</div> : null}
       <button
-        className={isCompleted ? "budget-data-button completed" : "budget-data-button"}
+        className={
+          isCompleted ? "budget-data-button completed" : "budget-data-button"
+        }
         type="button"
         onClick={onOpen}
       >
         <span className="budget-data-main">
-          <span className="budget-data-category-icon" aria-hidden="true" title={categoryLabel}>
+          <span
+            className="budget-data-category-icon"
+            aria-hidden="true"
+            title={categoryLabel}
+          >
             {categoryIcon}
           </span>
           <span className="budget-data-copy">
-            <span className={titleClassName ? `budget-data-title ${titleClassName}` : "budget-data-title"}>{title}</span>
+            <span
+              className={
+                titleClassName
+                  ? `budget-data-title ${titleClassName}`
+                  : "budget-data-title"
+              }
+            >
+              {title}
+            </span>
             {compactDueLabel ? (
               <span className="budget-data-mobile-due">
                 <span
-                  className={showRecurringBadge ? "budget-data-repeat-slot active" : "budget-data-repeat-slot"}
+                  className={
+                    showRecurringBadge
+                      ? "budget-data-repeat-slot active"
+                      : "budget-data-repeat-slot"
+                  }
                   title={showRecurringBadge ? "Регулярная статья" : undefined}
-                  aria-label={showRecurringBadge ? "Регулярная статья" : undefined}
+                  aria-label={
+                    showRecurringBadge ? "Регулярная статья" : undefined
+                  }
                 >
-                  {showRecurringBadge ? <span className="budget-data-repeat" aria-hidden="true">↻</span> : null}
+                  {showRecurringBadge ? (
+                    <span className="budget-data-repeat" aria-hidden="true">
+                      ↻
+                    </span>
+                  ) : null}
                 </span>
                 {compactDueLabel}
               </span>
@@ -3925,43 +4278,63 @@ function BudgetDataRow({
           </span>
         </span>
         {dueLabel ? (
-          <span className={isPastDue ? "budget-data-due overdue" : "budget-data-due"}>
+          <span
+            className={
+              isPastDue ? "budget-data-due overdue" : "budget-data-due"
+            }
+          >
             <span
-              className={showRecurringBadge ? "budget-data-repeat-slot active" : "budget-data-repeat-slot"}
+              className={
+                showRecurringBadge
+                  ? "budget-data-repeat-slot active"
+                  : "budget-data-repeat-slot"
+              }
               title={showRecurringBadge ? "Регулярная статья" : undefined}
               aria-label={showRecurringBadge ? "Регулярная статья" : undefined}
             >
-              {showRecurringBadge ? <span className="budget-data-repeat" aria-hidden="true">↻</span> : null}
+              {showRecurringBadge ? (
+                <span className="budget-data-repeat" aria-hidden="true">
+                  ↻
+                </span>
+              ) : null}
             </span>
             {dueLabel}
           </span>
         ) : null}
         {secondaryLabel ? (
-          <span className={secondaryTone === "muted" ? "budget-data-kind auto" : "budget-data-kind"}>
+          <span
+            className={
+              secondaryTone === "muted"
+                ? "budget-data-kind auto"
+                : "budget-data-kind"
+            }
+          >
             {secondaryLabel}
           </span>
         ) : null}
         <span className="budget-data-side">
-          <span className="budget-data-amount">{formatCurrency(amount)} Kč</span>
+          <span className="budget-data-amount">
+            {formatCurrency(amount)} Kč
+          </span>
         </span>
       </button>
       {note ? <div className="budget-data-note">{note}</div> : null}
       {actions ? <div className="budget-data-actions">{actions}</div> : null}
     </div>
-  );
+  )
 }
 
 function ExpenseRow({ expense, categories, onToggle, onOpen, onEdit }) {
-  const categoryMeta = getCategoryMeta(expense.category, categories);
-  const isAutoPayment = expense.cadence === "auto";
-  const isCompleted = expense.completed;
-  const isPastDue = isExpensePastDue(expense);
+  const categoryMeta = getCategoryMeta(expense.category, categories)
+  const isAutoPayment = expense.cadence === "auto"
+  const isCompleted = expense.completed
+  const isPastDue = isExpensePastDue(expense)
   const isRecurring =
     expense.frequency === "Каждый месяц" ||
     expense.frequency === "Раз в год" ||
-    Boolean(expense.templateId);
-  const transactionTypeLabel = isAutoPayment ? "Автоплатеж" : "Ручной платеж";
-  const paymentDateLabel = getExpensePaymentDateLabel(expense);
+    Boolean(expense.templateId)
+  const transactionTypeLabel = isAutoPayment ? "Автоплатеж" : "Ручной платеж"
+  const paymentDateLabel = getExpensePaymentDateLabel(expense)
 
   return (
     <BudgetDataRow
@@ -3975,27 +4348,43 @@ function ExpenseRow({ expense, categories, onToggle, onOpen, onEdit }) {
       showRecurringBadge={isRecurring}
       isCompleted={isCompleted}
       isPastDue={isPastDue}
-      leading={(
+      leading={
         <button
-          className={expense.completed ? "checkbox-button checked" : "checkbox-button"}
+          className={
+            expense.completed ? "checkbox-button checked" : "checkbox-button"
+          }
           type="button"
-          aria-label={expense.completed ? "Отметить как не оплаченное" : "Отметить как оплаченное"}
+          aria-label={
+            expense.completed
+              ? "Отметить как не оплаченное"
+              : "Отметить как оплаченное"
+          }
           onClick={() => onToggle(expense)}
         >
           <span className="checkbox-ui" aria-hidden="true" />
         </button>
-      )}
+      }
       onOpen={() => onOpen(expense)}
       rowClassName="expense-row"
     />
-  );
+  )
 }
 
-function MemberCard({ member, categories, onToggleExpense, onAddExpense, onOpenExpense, onEditExpense }) {
-  const memberBudget = member.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+function MemberCard({
+  member,
+  categories,
+  onToggleExpense,
+  onAddExpense,
+  onOpenExpense,
+  onEditExpense,
+}) {
+  const memberBudget = member.expenses.reduce(
+    (sum, expense) => sum + expense.amount,
+    0
+  )
   const paid = member.expenses
     .filter((expense) => expense.completed)
-    .reduce((sum, expense) => sum + expense.amount, 0);
+    .reduce((sum, expense) => sum + expense.amount, 0)
 
   return (
     <section className="card member-card">
@@ -4004,7 +4393,9 @@ function MemberCard({ member, categories, onToggleExpense, onAddExpense, onOpenE
           <div className="member-avatar">{member.emoji}</div>
           <div>
             <div className="member-name">{member.name}</div>
-            <div className="member-budget">Бюджет {formatCurrency(memberBudget)} Kč</div>
+            <div className="member-budget">
+              Бюджет {formatCurrency(memberBudget)} Kč
+            </div>
           </div>
         </div>
         <ProgressBar paid={paid} budget={memberBudget} />
@@ -4017,9 +4408,18 @@ function MemberCard({ member, categories, onToggleExpense, onAddExpense, onOpenE
               key={expense.id}
               expense={expense}
               categories={categories}
-              onToggle={(selectedExpense) => onToggleExpense(expense.sourceMember?.id ?? member.id, selectedExpense)}
-              onOpen={(selectedExpense) => onOpenExpense(expense.sourceMember ?? member, selectedExpense)}
-              onEdit={(selectedExpense) => onEditExpense(expense.sourceMember ?? member, selectedExpense)}
+              onToggle={(selectedExpense) =>
+                onToggleExpense(
+                  expense.sourceMember?.id ?? member.id,
+                  selectedExpense
+                )
+              }
+              onOpen={(selectedExpense) =>
+                onOpenExpense(expense.sourceMember ?? member, selectedExpense)
+              }
+              onEdit={(selectedExpense) =>
+                onEditExpense(expense.sourceMember ?? member, selectedExpense)
+              }
             />
           ))
         ) : (
@@ -4027,17 +4427,21 @@ function MemberCard({ member, categories, onToggleExpense, onAddExpense, onOpenE
         )}
       </div>
 
-      <button className="add-expense-button" type="button" onClick={() => onAddExpense(member.id)}>
+      <button
+        className="add-expense-button"
+        type="button"
+        onClick={() => onAddExpense(member.id)}
+      >
         Добавить
       </button>
     </section>
-  );
+  )
 }
 
 function createEmptyExpenseDraft(member, defaults = {}) {
-  const frequency = defaults.frequency ?? "";
-  const dayOfMonth = defaults.dayOfMonth ?? "";
-  const month = defaults.month ?? "";
+  const frequency = defaults.frequency ?? ""
+  const dayOfMonth = defaults.dayOfMonth ?? ""
+  const month = defaults.month ?? ""
   const dueLabel =
     defaults.dueLabel ??
     (frequency && dayOfMonth
@@ -4048,7 +4452,7 @@ function createEmptyExpenseDraft(member, defaults = {}) {
           urgent: false,
           completed: false,
         })
-      : "");
+      : "")
 
   return {
     member,
@@ -4069,99 +4473,174 @@ function createEmptyExpenseDraft(member, defaults = {}) {
       year: defaults.year,
       isDraft: true,
     },
-  };
+  }
 }
 
-function ModalShell({ title, onClose, children, compact = false }) {
-  const backdropMouseDownRef = useRef(false);
+function ModalShell({
+  title,
+  onClose,
+  children,
+  footer = null,
+  compact = false,
+  mobileScreen = false,
+}) {
+  const backdropMouseDownRef = useRef(false)
+  const cardClassName = [
+    "modal-card",
+    compact ? "compact" : "",
+    mobileScreen ? "mobile-screen" : "",
+  ]
+    .filter(Boolean)
+    .join(" ")
+  const backdropClassName = mobileScreen
+    ? "modal-backdrop mobile-screen-backdrop"
+    : "modal-backdrop"
+  const bodyClassName = ["modal-shell-body", footer ? "has-footer" : ""]
+    .filter(Boolean)
+    .join(" ")
 
   return (
     <div
-      className="modal-backdrop"
+      className={backdropClassName}
       role="presentation"
       onMouseDown={(event) => {
-        backdropMouseDownRef.current = event.target === event.currentTarget;
+        backdropMouseDownRef.current = event.target === event.currentTarget
       }}
       onClick={(event) => {
-        if (backdropMouseDownRef.current && event.target === event.currentTarget) {
-          onClose();
+        if (
+          backdropMouseDownRef.current &&
+          event.target === event.currentTarget
+        ) {
+          onClose()
         }
-        backdropMouseDownRef.current = false;
+        backdropMouseDownRef.current = false
       }}
     >
       <div
-        className={compact ? "modal-card compact" : "modal-card"}
+        className={cardClassName}
         role="dialog"
         aria-modal="true"
         aria-label={title}
         onMouseDown={() => {
-          backdropMouseDownRef.current = false;
+          backdropMouseDownRef.current = false
         }}
         onClick={(event) => event.stopPropagation()}
       >
-        <button className="modal-inline-close" type="button" onClick={onClose} aria-label="Закрыть окно">
+        {mobileScreen ? (
+          <div className="mobile-screen-topbar">
+            <button
+              className="mobile-screen-close"
+              type="button"
+              onClick={onClose}
+              aria-label="Закрыть окно"
+            >
+              ×
+            </button>
+          </div>
+        ) : null}
+        <button
+          className="modal-inline-close"
+          type="button"
+          onClick={onClose}
+          aria-label="Закрыть окно"
+        >
           ×
         </button>
         <button className="mobile-modal-close" type="button" onClick={onClose}>
           Назад
         </button>
-        {children}
+        <div className={bodyClassName}>{children}</div>
+        {footer ? <div className="modal-shell-footer">{footer}</div> : null}
       </div>
     </div>
-  );
+  )
 }
 
 function DetailRow({ label, value, tone = "default" }) {
   return (
     <div className="detail-row">
       <span className="detail-label">{label}</span>
-      <span className={tone === "muted" ? "detail-value muted" : "detail-value"}>{value}</span>
+      <span
+        className={tone === "muted" ? "detail-value muted" : "detail-value"}
+      >
+        {value}
+      </span>
     </div>
-  );
+  )
 }
 
 function ExpenseDetailsModal({ item, categories, onClose, onEdit, onDelete }) {
-  const { member, expense } = item;
-  const frequency = detectFrequency(expense);
-  const dayOfMonth = expense.dueLabel?.match(/\d+/)?.[0] ?? "Не указано";
-  const [confirmDelete, setConfirmDelete] = useState(false);
+  const { member, expense } = item
+  const frequency = detectFrequency(expense)
+  const dayOfMonth = expense.dueLabel?.match(/\d+/)?.[0] ?? "Не указано"
+  const [confirmDelete, setConfirmDelete] = useState(false)
 
   const handleDelete = () => {
-    setConfirmDelete(true);
-  };
+    setConfirmDelete(true)
+  }
+  const footer = (
+    <div className="details-actions">
+      <button
+        className="secondary-action-button danger"
+        type="button"
+        onClick={handleDelete}
+      >
+        Удалить
+      </button>
+      <button className="primary-action-button" type="button" onClick={onEdit}>
+        Изменить
+      </button>
+    </div>
+  )
 
   return (
-    <ModalShell title="Детали траты" onClose={onClose} compact>
+    <ModalShell
+      title="Детали траты"
+      onClose={onClose}
+      footer={footer}
+      compact
+      mobileScreen
+    >
       <div className="modal-header">
         <div>
           <h2>{expense.title}</h2>
-          <div className="details-amount inline">{formatCurrency(expense.amount)} Kč</div>
+          <div className="details-amount inline">
+            {formatCurrency(expense.amount)} Kč
+          </div>
         </div>
       </div>
 
       <div className="details-stack">
         <div className="details-grid">
-          <DetailRow label="Категория" value={getCategoryDisplay(expense.category, categories)} />
-          <DetailRow label="Тип транзакции" value={formatCadenceLabel(expense.cadence)} />
+          <DetailRow
+            label="Категория"
+            value={getCategoryDisplay(expense.category, categories)}
+          />
+          <DetailRow
+            label="Тип транзакции"
+            value={formatCadenceLabel(expense.cadence)}
+          />
           <DetailRow label="Периодичность" value={frequency} />
           <DetailRow label="Число месяца" value={dayOfMonth} />
-          <DetailRow label="Чья трата" value={getExpenseOwner(expense, member)} />
+          <DetailRow
+            label="Чья трата"
+            value={getExpenseOwner(expense, member)}
+          />
           <DetailRow label="Кто платит" value={getExpensePayer(expense)} />
-          <DetailRow label="Напоминание" value={expense.dueLabel} tone={expense.urgent ? "default" : "muted"} />
-        </div>
-
-        <div className="details-actions">
-          <button className="secondary-action-button danger" type="button" onClick={handleDelete}>
-            Удалить
-          </button>
-          <button className="primary-action-button" type="button" onClick={onEdit}>
-            Изменить
-          </button>
+          <DetailRow
+            label="Напоминание"
+            value={expense.dueLabel}
+            tone={expense.urgent ? "default" : "muted"}
+          />
         </div>
       </div>
 
       {confirmDelete ? (
-        <div className="confirm-overlay" role="presentation" onClick={() => setConfirmDelete(false)}>
+        <div
+          className="confirm-overlay"
+          role="presentation"
+          onClick={() => setConfirmDelete(false)}
+        >
           <div
             className="confirm-dialog"
             role="alertdialog"
@@ -4169,7 +4648,9 @@ function ExpenseDetailsModal({ item, categories, onClose, onEdit, onDelete }) {
             onClick={(event) => event.stopPropagation()}
           >
             <p className="inline-confirm-title">Удалить трату?</p>
-            <p className="inline-confirm-text">"{expense.title}" будет удалена из списка.</p>
+            <p className="inline-confirm-text">
+              "{expense.title}" будет удалена из списка.
+            </p>
             <div className="inline-confirm-actions">
               <button
                 className="secondary-action-button"
@@ -4190,63 +4671,110 @@ function ExpenseDetailsModal({ item, categories, onClose, onEdit, onDelete }) {
         </div>
       ) : null}
     </ModalShell>
-  );
+  )
 }
 
-function RegularExpenseDetailsModal({ template, categories, onClose, onEdit, onDelete, onStop, onResume }) {
-  const currentMonthContext = getCurrentMonthContext();
+function RegularExpenseDetailsModal({
+  template,
+  categories,
+  onClose,
+  onEdit,
+  onDelete,
+  onStop,
+  onResume,
+}) {
+  const currentMonthContext = getCurrentMonthContext()
   const currentAmount = getRegularAmountForPeriod(
     template,
     currentMonthContext.year,
-    currentMonthContext.monthName,
-  );
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const stopNote = getRegularStopNote(template, currentMonthContext);
-  const isStopped = isRegularTemplateScheduledToStop(template);
+    currentMonthContext.monthName
+  )
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const stopNote = getRegularStopNote(template, currentMonthContext)
+  const isStopped = isRegularTemplateScheduledToStop(template)
+  const footer = (
+    <div className="details-actions">
+      <button
+        className="secondary-action-button danger"
+        type="button"
+        onClick={() => setConfirmDelete(true)}
+      >
+        Удалить
+      </button>
+      {isStopped ? (
+        <button
+          className="secondary-action-button"
+          type="button"
+          onClick={onResume}
+        >
+          Возобновить
+        </button>
+      ) : (
+        <button
+          className="secondary-action-button warning"
+          type="button"
+          onClick={onStop}
+        >
+          Остановить
+        </button>
+      )}
+      <button className="primary-action-button" type="button" onClick={onEdit}>
+        Изменить
+      </button>
+    </div>
+  )
 
   return (
-    <ModalShell title="Детали регулярной траты" onClose={onClose} compact>
+    <ModalShell
+      title="Детали регулярной траты"
+      onClose={onClose}
+      footer={footer}
+      compact
+      mobileScreen
+    >
       <div className="modal-header">
         <div>
           <h2>{template.title}</h2>
-          <div className="details-amount inline">{formatCurrency(currentAmount)} Kč</div>
+          <div className="details-amount inline">
+            {formatCurrency(currentAmount)} Kč
+          </div>
         </div>
       </div>
 
       <div className="details-stack">
         <div className="details-grid">
-          <DetailRow label="Категория" value={getCategoryDisplay(template.category, categories)} />
-          <DetailRow label="Тип транзакции" value={formatCadenceLabel(template.cadence)} />
+          <DetailRow
+            label="Категория"
+            value={getCategoryDisplay(template.category, categories)}
+          />
+          <DetailRow
+            label="Тип транзакции"
+            value={formatCadenceLabel(template.cadence)}
+          />
           <DetailRow label="Периодичность" value={template.frequency} />
           <DetailRow label="Число месяца" value={template.dayOfMonth} />
-          {template.frequency === "Раз в год" ? <DetailRow label="Месяц" value={template.month} /> : null}
+          {template.frequency === "Раз в год" ? (
+            <DetailRow label="Месяц" value={template.month} />
+          ) : null}
           <DetailRow label="Чья трата" value={template.owner} />
           <DetailRow label="Кто платит" value={template.payer} />
-          <DetailRow label="Напоминание" value={formatRegularSchedule(template)} tone="muted" />
-          {stopNote ? <DetailRow label="Статус" value={stopNote} tone="muted" /> : null}
-        </div>
-
-        <div className="details-actions">
-          <button className="secondary-action-button danger" type="button" onClick={() => setConfirmDelete(true)}>
-            Удалить
-          </button>
-          {isStopped ? (
-            <button className="secondary-action-button" type="button" onClick={onResume}>
-              Возобновить
-            </button>
-          ) : (
-            <button className="secondary-action-button warning" type="button" onClick={onStop}>
-              Остановить
-            </button>
-          )}
-          <button className="primary-action-button" type="button" onClick={onEdit}>
-            Изменить
-          </button>
+          <DetailRow
+            label="Напоминание"
+            value={formatRegularSchedule(template)}
+            tone="muted"
+          />
+          {stopNote ? (
+            <DetailRow label="Статус" value={stopNote} tone="muted" />
+          ) : null}
         </div>
       </div>
 
       {confirmDelete ? (
-        <div className="confirm-overlay" role="presentation" onClick={() => setConfirmDelete(false)}>
+        <div
+          className="confirm-overlay"
+          role="presentation"
+          onClick={() => setConfirmDelete(false)}
+        >
           <div
             className="confirm-dialog"
             role="alertdialog"
@@ -4254,12 +4782,22 @@ function RegularExpenseDetailsModal({ template, categories, onClose, onEdit, onD
             onClick={(event) => event.stopPropagation()}
           >
             <p className="inline-confirm-title">Удалить регулярную трату?</p>
-            <p className="inline-confirm-text">"{template.title}" будет удалена из шаблонов и будущих месяцев.</p>
+            <p className="inline-confirm-text">
+              "{template.title}" будет удалена из шаблонов и будущих месяцев.
+            </p>
             <div className="inline-confirm-actions">
-              <button className="secondary-action-button" type="button" onClick={() => setConfirmDelete(false)}>
+              <button
+                className="secondary-action-button"
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+              >
                 Отмена
               </button>
-              <button className="secondary-action-button danger solid" type="button" onClick={onDelete}>
+              <button
+                className="secondary-action-button danger solid"
+                type="button"
+                onClick={onDelete}
+              >
                 Да, удалить
               </button>
             </div>
@@ -4267,37 +4805,51 @@ function RegularExpenseDetailsModal({ template, categories, onClose, onEdit, onD
         </div>
       ) : null}
     </ModalShell>
-  );
+  )
 }
 
 function RecurringEditChoiceModal({ title, onClose, onEditTemplate }) {
+  const footer = (
+    <div className="details-actions stacked">
+      <button
+        className="primary-action-button"
+        type="button"
+        onClick={onEditTemplate}
+      >
+        Изменить со следующего месяца
+      </button>
+    </div>
+  )
+
   return (
-    <ModalShell title="Как изменить регулярную трату" onClose={onClose} compact>
+    <ModalShell
+      title="Как изменить регулярную трату"
+      onClose={onClose}
+      footer={footer}
+      compact
+      mobileScreen
+    >
       <div className="modal-header">
         <div>
           <h2>{title}</h2>
           <p className="regular-editor-note">
-            Это регулярная трата. Изменения будут применены к шаблону и вступят в силу со следующего месяца.
+            Это регулярная трата. Изменения будут применены к шаблону и вступят
+            в силу со следующего месяца.
           </p>
         </div>
       </div>
-
-      <div className="details-actions stacked">
-        <button className="primary-action-button" type="button" onClick={onEditTemplate}>
-          Изменить со следующего месяца
-        </button>
-      </div>
     </ModalShell>
-  );
+  )
 }
 
 function ExpenseEditorModal({ item, onClose, onSave, categories }) {
-  const isCreateMode = Boolean(item.expense.isDraft);
-  const detectedFrequency = detectFrequency(item.expense);
-  const resolvedFrequency = item.expense.frequency ?? detectedFrequency;
-  const resolvedDayOfMonth = item.expense.dayOfMonth ?? item.expense.dueLabel?.match(/\d+/)?.[0] ?? "";
-  const resolvedMonth = item.expense.month ?? getExpenseMonth(item.expense);
-  const [showValidation, setShowValidation] = useState(false);
+  const isCreateMode = Boolean(item.expense.isDraft)
+  const detectedFrequency = detectFrequency(item.expense)
+  const resolvedFrequency = item.expense.frequency ?? detectedFrequency
+  const resolvedDayOfMonth =
+    item.expense.dayOfMonth ?? item.expense.dueLabel?.match(/\d+/)?.[0] ?? ""
+  const resolvedMonth = item.expense.month ?? getExpenseMonth(item.expense)
+  const [showValidation, setShowValidation] = useState(false)
   const [form, setForm] = useState(() => ({
     title: item.expense.title,
     amount: parseDigits(item.expense.amount),
@@ -4313,39 +4865,45 @@ function ExpenseEditorModal({ item, onClose, onSave, categories }) {
     frequency: resolvedFrequency,
     dayOfMonth: resolvedDayOfMonth,
     month: resolvedMonth,
-    owner: isCreateMode ? getExpenseOwner(item.expense, item.member) ?? "" : getExpenseOwner(item.expense, item.member),
-    payer: isCreateMode ? getExpensePayer(item.expense) ?? "" : getExpensePayer(item.expense),
-    category: isCreateMode ? getCategoryOption(item.expense.category, categories) : getCategoryOption(item.expense.category, categories),
-  }));
+    owner: isCreateMode
+      ? (getExpenseOwner(item.expense, item.member) ?? "")
+      : getExpenseOwner(item.expense, item.member),
+    payer: isCreateMode
+      ? (getExpensePayer(item.expense) ?? "")
+      : getExpensePayer(item.expense),
+    category: isCreateMode
+      ? getCategoryOption(item.expense.category, categories)
+      : getCategoryOption(item.expense.category, categories),
+  }))
 
-  const dayValue = Number(form.dayOfMonth || 0);
-  const isInvalidDay = form.dayOfMonth !== "" && (dayValue < 1 || dayValue > 28);
+  const dayValue = Number(form.dayOfMonth || 0)
+  const isInvalidDay = form.dayOfMonth !== "" && (dayValue < 1 || dayValue > 28)
   const dayHint =
     form.dayOfMonth === ""
       ? "Выберите число от 1 до 28"
       : isInvalidDay
         ? "29-е число недоступно. Выберите день от 1 до 28"
-        : "Выберите число от 1 до 28";
+        : "Выберите число от 1 до 28"
 
   const updateField = (field, value) => {
-    setForm((current) => ({ ...current, [field]: value }));
-  };
+    setForm((current) => ({ ...current, [field]: value }))
+  }
 
   const handleAmountChange = (event) => {
-    updateField("amount", parseDigits(event.target.value));
-  };
+    updateField("amount", parseDigits(event.target.value))
+  }
 
   const handleDayChange = (event) => {
-    const digits = parseDigits(event.target.value).slice(0, 2);
+    const digits = parseDigits(event.target.value).slice(0, 2)
 
     if (!digits) {
-      updateField("dayOfMonth", "");
-      return;
+      updateField("dayOfMonth", "")
+      return
     }
 
-    const numericValue = Number(digits);
-    updateField("dayOfMonth", String(Math.min(numericValue, 29)));
-  };
+    const numericValue = Number(digits)
+    updateField("dayOfMonth", String(Math.min(numericValue, 29)))
+  }
 
   const hasChanges =
     form.title !== item.expense.title ||
@@ -4356,7 +4914,7 @@ function ExpenseEditorModal({ item, onClose, onSave, categories }) {
     form.month !== resolvedMonth ||
     form.owner !== getExpenseOwner(item.expense, item.member) ||
     form.payer !== getExpensePayer(item.expense) ||
-    form.category !== getCategoryOption(item.expense.category, categories);
+    form.category !== getCategoryOption(item.expense.category, categories)
 
   const fieldErrors = {
     title: showValidation && form.title.trim() === "",
@@ -4368,7 +4926,7 @@ function ExpenseEditorModal({ item, onClose, onSave, categories }) {
     owner: showValidation && form.owner === "",
     payer: showValidation && form.payer === "",
     category: showValidation && form.category === "",
-  };
+  }
 
   const errorTexts = {
     title: "Требуется заполнить",
@@ -4380,7 +4938,7 @@ function ExpenseEditorModal({ item, onClose, onSave, categories }) {
     owner: "Требуется выбрать",
     payer: "Требуется выбрать",
     category: "Требуется выбрать",
-  };
+  }
 
   const isReadyToSave =
     form.title.trim() !== "" &&
@@ -4392,16 +4950,16 @@ function ExpenseEditorModal({ item, onClose, onSave, categories }) {
     form.month !== "" &&
     form.owner !== "" &&
     form.payer !== "" &&
-    form.category !== "";
+    form.category !== ""
 
   const handleSave = () => {
     if (!isReadyToSave) {
-      setShowValidation(true);
-      return;
+      setShowValidation(true)
+      return
     }
 
     if (!hasChanges) {
-      return;
+      return
     }
 
     onSave(item, {
@@ -4415,11 +4973,39 @@ function ExpenseEditorModal({ item, onClose, onSave, categories }) {
       owner: form.owner,
       payer: form.payer,
       category: stripCategoryLabel(form.category),
-    });
-  };
+    })
+  }
+  const footer = (
+    <div className="editor-footer">
+      <p className="modal-footnote">* — обязательно</p>
+      <div className="editor-actions">
+        <button
+          className="secondary-action-button"
+          type="button"
+          onClick={onClose}
+        >
+          Отмена
+        </button>
+        <button
+          className="primary-action-button"
+          type="button"
+          disabled={!isCreateMode && !hasChanges}
+          onClick={handleSave}
+        >
+          Сохранить
+        </button>
+      </div>
+    </div>
+  )
 
   return (
-    <ModalShell title={isCreateMode ? "Добавить трату" : "Изменить трату"} onClose={onClose}>
+    <ModalShell
+      title={isCreateMode ? "Добавить трату" : "Изменить трату"}
+      onClose={onClose}
+      footer={footer}
+      compact
+      mobileScreen
+    >
       <div className="modal-header">
         <h2>{isCreateMode ? "Добавить трату" : "Изменить"}</h2>
       </div>
@@ -4428,27 +5014,41 @@ function ExpenseEditorModal({ item, onClose, onSave, categories }) {
         <label className={fieldErrors.title ? "field invalid" : "field"}>
           <span className="field-head">
             <span>Название *</span>
-            {fieldErrors.title ? <span className="field-inline-error">{errorTexts.title}</span> : null}
+            {fieldErrors.title ? (
+              <span className="field-inline-error">{errorTexts.title}</span>
+            ) : null}
           </span>
-          <input value={form.title} onChange={(event) => updateField("title", event.target.value)} />
+          <input
+            value={form.title}
+            onChange={(event) => updateField("title", event.target.value)}
+          />
         </label>
 
         <label className={fieldErrors.amount ? "field invalid" : "field"}>
           <span className="field-head">
             <span>Сумма *</span>
-            {fieldErrors.amount ? <span className="field-inline-error">{errorTexts.amount}</span> : null}
+            {fieldErrors.amount ? (
+              <span className="field-inline-error">{errorTexts.amount}</span>
+            ) : null}
           </span>
           <div className="input-with-suffix">
-            <input value={formatNumberInput(form.amount)} onChange={handleAmountChange} />
+            <input
+              value={formatNumberInput(form.amount)}
+              onChange={handleAmountChange}
+            />
             <span>Kč</span>
           </div>
         </label>
 
-        <div className={fieldErrors.transactionType ? "field invalid" : "field"}>
+        <div
+          className={fieldErrors.transactionType ? "field invalid" : "field"}
+        >
           <span className="field-head">
             <span>Тип транзакции *</span>
             {fieldErrors.transactionType ? (
-              <span className="field-inline-error">{errorTexts.transactionType}</span>
+              <span className="field-inline-error">
+                {errorTexts.transactionType}
+              </span>
             ) : null}
           </span>
           <SegmentGroup
@@ -4461,7 +5061,9 @@ function ExpenseEditorModal({ item, onClose, onSave, categories }) {
         <div className={fieldErrors.frequency ? "field invalid" : "field"}>
           <span className="field-head">
             <span>Периодичность *</span>
-            {fieldErrors.frequency ? <span className="field-inline-error">{errorTexts.frequency}</span> : null}
+            {fieldErrors.frequency ? (
+              <span className="field-inline-error">{errorTexts.frequency}</span>
+            ) : null}
           </span>
           <SegmentGroup
             options={["Каждый месяц", "Раз в год", "Единоразово"]}
@@ -4474,7 +5076,9 @@ function ExpenseEditorModal({ item, onClose, onSave, categories }) {
           <span className="field-head">
             <span>Число в месяце (1-28) *</span>
             {fieldErrors.dayOfMonth && form.dayOfMonth === "" ? (
-              <span className="field-inline-error">{errorTexts.dayOfMonth}</span>
+              <span className="field-inline-error">
+                {errorTexts.dayOfMonth}
+              </span>
             ) : null}
           </span>
           <input
@@ -4482,7 +5086,11 @@ function ExpenseEditorModal({ item, onClose, onSave, categories }) {
             placeholder="Выберите число от 1 до 28"
             onChange={handleDayChange}
           />
-          <span className={fieldErrors.dayOfMonth ? "field-hint error" : "field-hint"}>
+          <span
+            className={
+              fieldErrors.dayOfMonth ? "field-hint error" : "field-hint"
+            }
+          >
             {form.dayOfMonth === "" ? "Требуется заполнить" : dayHint}
           </span>
         </label>
@@ -4490,59 +5098,64 @@ function ExpenseEditorModal({ item, onClose, onSave, categories }) {
         <div className={fieldErrors.month ? "field invalid" : "field"}>
           <span className="field-head">
             <span>Месяц *</span>
-            {fieldErrors.month ? <span className="field-inline-error">{errorTexts.month}</span> : null}
+            {fieldErrors.month ? (
+              <span className="field-inline-error">{errorTexts.month}</span>
+            ) : null}
           </span>
-          <SegmentGroup options={monthOptions} value={form.month} onChange={(value) => updateField("month", value)} />
+          <SegmentGroup
+            options={monthOptions}
+            value={form.month}
+            onChange={(value) => updateField("month", value)}
+          />
         </div>
 
         <div className={fieldErrors.owner ? "field invalid" : "field"}>
           <span className="field-head">
             <span>Чья это трата? *</span>
-            {fieldErrors.owner ? <span className="field-inline-error">{errorTexts.owner}</span> : null}
+            {fieldErrors.owner ? (
+              <span className="field-inline-error">{errorTexts.owner}</span>
+            ) : null}
           </span>
-          <SegmentGroup options={ownerOptions} value={form.owner} onChange={(value) => updateField("owner", value)} />
+          <SegmentGroup
+            options={ownerOptions}
+            value={form.owner}
+            onChange={(value) => updateField("owner", value)}
+          />
         </div>
 
         <div className={fieldErrors.payer ? "field invalid" : "field"}>
           <span className="field-head">
             <span>А кто платит? *</span>
-            {fieldErrors.payer ? <span className="field-inline-error">{errorTexts.payer}</span> : null}
+            {fieldErrors.payer ? (
+              <span className="field-inline-error">{errorTexts.payer}</span>
+            ) : null}
           </span>
-          <SegmentGroup options={payerOptions} value={form.payer} onChange={(value) => updateField("payer", value)} />
+          <SegmentGroup
+            options={payerOptions}
+            value={form.payer}
+            onChange={(value) => updateField("payer", value)}
+          />
         </div>
 
         <div className={fieldErrors.category ? "field invalid" : "field"}>
           <span className="field-head">
             <span>Категория *</span>
-            {fieldErrors.category ? <span className="field-inline-error">{errorTexts.category}</span> : null}
+            {fieldErrors.category ? (
+              <span className="field-inline-error">{errorTexts.category}</span>
+            ) : null}
           </span>
           <SegmentGroup
-            options={categories.map((category) => formatCategoryOption(category))}
+            options={categories.map((category) =>
+              formatCategoryOption(category)
+            )}
             value={form.category}
             variant="category"
             onChange={(value) => updateField("category", value)}
           />
         </div>
       </div>
-
-      <div className="editor-footer">
-        <p className="modal-footnote">* — обязательно</p>
-        <div className="editor-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>
-            Отмена
-          </button>
-          <button
-            className="primary-action-button"
-            type="button"
-            disabled={!isCreateMode && !hasChanges}
-            onClick={handleSave}
-          >
-            Сохранить
-          </button>
-        </div>
-      </div>
     </ModalShell>
-  );
+  )
 }
 
 function Breadcrumbs({ items }) {
@@ -4557,62 +5170,104 @@ function Breadcrumbs({ items }) {
           disabled={item.current}
         >
           {item.label}
-          {index < items.length - 1 ? <span className="breadcrumb-separator">/</span> : null}
+          {index < items.length - 1 ? (
+            <span className="breadcrumb-separator">/</span>
+          ) : null}
         </button>
       ))}
     </nav>
-  );
+  )
 }
 
-function SettingsScreen({ onOpenCategories, onOpenCashflowAccounts, onOpenCashflowFunds, onRequestReset }) {
+function SettingsScreen({
+  onOpenCategories,
+  onOpenCashflowAccounts,
+  onOpenCashflowFunds,
+  onRequestReset,
+}) {
   return (
     <>
       <header className="page-header">
         <p className="eyebrow">Настройка приложения</p>
         <h1>Настройки</h1>
-        <p className="page-note">Здесь будем собирать все управляемые параметры приложения.</p>
+        <p className="page-note">
+          Здесь будем собирать все управляемые параметры приложения.
+        </p>
       </header>
 
       <section className="card settings-screen-card">
         <div className="settings-stack">
-          <button className="settings-action-card" type="button" onClick={onOpenCategories}>
+          <button
+            className="settings-action-card"
+            type="button"
+            onClick={onOpenCategories}
+          >
             <span className="settings-action-title">Настройки категорий</span>
             <span className="settings-action-note">
-              Добавлять, изменять и удалять категории для всех попапов приложения.
+              Добавлять, изменять и удалять категории для всех попапов
+              приложения.
             </span>
           </button>
-          <button className="settings-action-card" type="button" onClick={onOpenCashflowAccounts}>
-            <span className="settings-action-title">Счета для потоков денег</span>
+          <button
+            className="settings-action-card"
+            type="button"
+            onClick={onOpenCashflowAccounts}
+          >
+            <span className="settings-action-title">
+              Счета для потоков денег
+            </span>
             <span className="settings-action-note">
-              Добавлять, переименовывать и удалять места хранения денег: банки, наличные, брокеры и другие счета.
+              Добавлять, переименовывать и удалять места хранения денег: банки,
+              наличные, брокеры и другие счета.
             </span>
           </button>
-          <button className="settings-action-card" type="button" onClick={onOpenCashflowFunds}>
-            <span className="settings-action-title">Фонды для потоков денег</span>
+          <button
+            className="settings-action-card"
+            type="button"
+            onClick={onOpenCashflowFunds}
+          >
+            <span className="settings-action-title">
+              Фонды для потоков денег
+            </span>
             <span className="settings-action-note">
-              Управлять фондами вроде кубышки, сейфа безопасности, инвестиций и накоплений.
+              Управлять фондами вроде кубышки, сейфа безопасности, инвестиций и
+              накоплений.
             </span>
           </button>
-          <button className="settings-action-card settings-action-card-danger" type="button" onClick={onRequestReset}>
-            <span className="settings-action-title settings-action-title-danger">Очистить тестовые данные</span>
+          <button
+            className="settings-action-card settings-action-card-danger"
+            type="button"
+            onClick={onRequestReset}
+          >
+            <span className="settings-action-title settings-action-title-danger">
+              Очистить тестовые данные
+            </span>
             <span className="settings-action-note settings-action-note-danger">
-              Удалить все текущие траты, будущие планы и регулярные шаблоны, чтобы начать тестирование с чистого состояния.
+              Удалить все текущие траты, будущие планы и регулярные шаблоны,
+              чтобы начать тестирование с чистого состояния.
             </span>
           </button>
         </div>
       </section>
     </>
-  );
+  )
 }
 
-function CashflowAccountsSettingsScreen({ accounts, snapshots, onBackToSettings, onOpenCreate, onOpenEdit, onRequestDelete }) {
+function CashflowAccountsSettingsScreen({
+  accounts,
+  snapshots,
+  onBackToSettings,
+  onOpenCreate,
+  onOpenEdit,
+  onRequestDelete,
+}) {
   const usageCountByAccountId = useMemo(() => {
-    const counts = new Map();
+    const counts = new Map()
     snapshots.forEach((snapshot) => {
-      counts.set(snapshot.accountId, (counts.get(snapshot.accountId) ?? 0) + 1);
-    });
-    return counts;
-  }, [snapshots]);
+      counts.set(snapshot.accountId, (counts.get(snapshot.accountId) ?? 0) + 1)
+    })
+    return counts
+  }, [snapshots])
 
   return (
     <>
@@ -4625,16 +5280,28 @@ function CashflowAccountsSettingsScreen({ accounts, snapshots, onBackToSettings,
         />
         <p className="eyebrow">Потоки денег</p>
         <h1>Счета cashflow</h1>
-        <p className="page-note">Здесь живут места хранения денег, которые потом выбираются в снимках баланса.</p>
+        <p className="page-note">
+          Здесь живут места хранения денег, которые потом выбираются в снимках
+          баланса.
+        </p>
       </header>
 
       <section className="card settings-screen-card">
         <div className="settings-section-head">
           <div>
             <h2>Счета</h2>
-            <p>Банки, наличные, брокеры и другие места, где фактически лежат деньги.</p>
+            <p>
+              Банки, наличные, брокеры и другие места, где фактически лежат
+              деньги.
+            </p>
           </div>
-          <button className="primary-action-button" type="button" onClick={onOpenCreate}>Добавить счёт</button>
+          <button
+            className="primary-action-button"
+            type="button"
+            onClick={onOpenCreate}
+          >
+            Добавить счёт
+          </button>
         </div>
         <div className="settings-entity-list">
           {accounts.length ? (
@@ -4642,12 +5309,31 @@ function CashflowAccountsSettingsScreen({ accounts, snapshots, onBackToSettings,
               <div key={account.id} className="settings-entity-row">
                 <div className="settings-entity-copy">
                   <strong>{account.name}</strong>
-                  <span>{getCashflowOwnerLabel(account.owner)} · {cashflowAccountTypeOptions.find((item) => item.value === account.accountType)?.label ?? account.accountType}</span>
-                  <span>{usageCountByAccountId.get(account.id) ?? 0} снимков</span>
+                  <span>
+                    {getCashflowOwnerLabel(account.owner)} ·{" "}
+                    {cashflowAccountTypeOptions.find(
+                      (item) => item.value === account.accountType
+                    )?.label ?? account.accountType}
+                  </span>
+                  <span>
+                    {usageCountByAccountId.get(account.id) ?? 0} снимков
+                  </span>
                 </div>
                 <div className="settings-entity-actions">
-                  <button className="secondary-action-button" type="button" onClick={() => onOpenEdit(account)}>Изменить</button>
-                  <button className="secondary-action-button danger" type="button" onClick={() => onRequestDelete(account)}>Удалить</button>
+                  <button
+                    className="secondary-action-button"
+                    type="button"
+                    onClick={() => onOpenEdit(account)}
+                  >
+                    Изменить
+                  </button>
+                  <button
+                    className="secondary-action-button danger"
+                    type="button"
+                    onClick={() => onRequestDelete(account)}
+                  >
+                    Удалить
+                  </button>
                 </div>
               </div>
             ))
@@ -4657,17 +5343,24 @@ function CashflowAccountsSettingsScreen({ accounts, snapshots, onBackToSettings,
         </div>
       </section>
     </>
-  );
+  )
 }
 
-function CashflowFundsSettingsScreen({ funds, snapshots, onBackToSettings, onOpenCreate, onOpenEdit, onRequestDelete }) {
+function CashflowFundsSettingsScreen({
+  funds,
+  snapshots,
+  onBackToSettings,
+  onOpenCreate,
+  onOpenEdit,
+  onRequestDelete,
+}) {
   const usageCountByFundId = useMemo(() => {
-    const counts = new Map();
+    const counts = new Map()
     snapshots.forEach((snapshot) => {
-      counts.set(snapshot.fundId, (counts.get(snapshot.fundId) ?? 0) + 1);
-    });
-    return counts;
-  }, [snapshots]);
+      counts.set(snapshot.fundId, (counts.get(snapshot.fundId) ?? 0) + 1)
+    })
+    return counts
+  }, [snapshots])
 
   return (
     <>
@@ -4680,16 +5373,28 @@ function CashflowFundsSettingsScreen({ funds, snapshots, onBackToSettings, onOpe
         />
         <p className="eyebrow">Потоки денег</p>
         <h1>Фонды cashflow</h1>
-        <p className="page-note">Здесь живут назначения денег: кубышка, сейф, инвестиции, накопления и свободный остаток.</p>
+        <p className="page-note">
+          Здесь живут назначения денег: кубышка, сейф, инвестиции, накопления и
+          свободный остаток.
+        </p>
       </header>
 
       <section className="card settings-screen-card">
         <div className="settings-section-head">
           <div>
             <h2>Фонды</h2>
-            <p>Системные фонды можно переименовывать, а пользовательские — добавлять и удалять.</p>
+            <p>
+              Системные фонды можно переименовывать, а пользовательские —
+              добавлять и удалять.
+            </p>
           </div>
-          <button className="primary-action-button" type="button" onClick={onOpenCreate}>Добавить фонд</button>
+          <button
+            className="primary-action-button"
+            type="button"
+            onClick={onOpenCreate}
+          >
+            Добавить фонд
+          </button>
         </div>
         <div className="settings-entity-list">
           {funds.length ? (
@@ -4698,12 +5403,27 @@ function CashflowFundsSettingsScreen({ funds, snapshots, onBackToSettings, onOpe
                 <div className="settings-entity-copy">
                   <strong>{fund.name}</strong>
                   <span>{getCashflowSystemFundLabel(fund.fundType)}</span>
-                  <span>{usageCountByFundId.get(fund.id) ?? 0} снимков{fund.isSystem ? " · системный" : ""}</span>
+                  <span>
+                    {usageCountByFundId.get(fund.id) ?? 0} снимков
+                    {fund.isSystem ? " · системный" : ""}
+                  </span>
                 </div>
                 <div className="settings-entity-actions">
-                  <button className="secondary-action-button" type="button" onClick={() => onOpenEdit(fund)}>Изменить</button>
+                  <button
+                    className="secondary-action-button"
+                    type="button"
+                    onClick={() => onOpenEdit(fund)}
+                  >
+                    Изменить
+                  </button>
                   {!fund.isSystem ? (
-                    <button className="secondary-action-button danger" type="button" onClick={() => onRequestDelete(fund)}>Удалить</button>
+                    <button
+                      className="secondary-action-button danger"
+                      type="button"
+                      onClick={() => onRequestDelete(fund)}
+                    >
+                      Удалить
+                    </button>
                   ) : null}
                 </div>
               </div>
@@ -4714,10 +5434,16 @@ function CashflowFundsSettingsScreen({ funds, snapshots, onBackToSettings, onOpe
         </div>
       </section>
     </>
-  );
+  )
 }
 
-function AuthScreen({ onSignIn, isPending, errorMessage }) {
+function AuthScreen({
+  onSignIn,
+  isPending,
+  errorMessage,
+  canUsePreview = false,
+  onOpenPreview = null,
+}) {
   return (
     <main className="auth-shell">
       <section className="auth-card">
@@ -4729,8 +5455,8 @@ function AuthScreen({ onSignIn, isPending, errorMessage }) {
           <p className="eyebrow">Личный вход</p>
           <h1>Войди через Google, чтобы открыть семейный бюджет</h1>
           <p>
-            После входа приложение загрузит твои категории, текущий месяц, будущие траты и регулярные
-            шаблоны из Supabase.
+            После входа приложение загрузит твои категории, текущий месяц,
+            будущие траты и регулярные шаблоны из Supabase.
           </p>
         </div>
 
@@ -4746,14 +5472,32 @@ function AuthScreen({ onSignIn, isPending, errorMessage }) {
           {isPending ? "Перенаправляем в Google..." : "Войти через Google"}
         </button>
 
+        {canUsePreview && onOpenPreview ? (
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onOpenPreview}
+          >
+            Открыть локальный preview без входа
+          </button>
+        ) : null}
+
         <p className="auth-footnote">
-          Доступ будет открыт только после авторизации. Публичная ссылка без входа бюджет не покажет.
+          Доступ будет открыт только после авторизации. Публичная ссылка без
+          входа бюджет не покажет.
         </p>
+
+        {canUsePreview ? (
+          <p className="auth-footnote">
+            Preview доступен только локально в dev-режиме и не работает в
+            продакшене.
+          </p>
+        ) : null}
 
         {errorMessage ? <p className="auth-error">{errorMessage}</p> : null}
       </section>
     </main>
-  );
+  )
 }
 
 function SessionCard({ user, onSignOut, isPending }) {
@@ -4767,7 +5511,10 @@ function SessionCard({ user, onSignOut, isPending }) {
             alt={getAuthUserDisplayName(user)}
           />
         ) : (
-          <div className="session-avatar session-avatar-fallback" aria-hidden="true">
+          <div
+            className="session-avatar session-avatar-fallback"
+            aria-hidden="true"
+          >
             {getAuthUserDisplayName(user).slice(0, 1).toUpperCase()}
           </div>
         )}
@@ -4787,80 +5534,57 @@ function SessionCard({ user, onSignOut, isPending }) {
         Выйти
       </button>
     </section>
-  );
+  )
 }
 
-function getScreenNavigationLabel(screen, selectedPeriodContext) {
-  if (screen === "months") {
-    return "Бюджет";
-  }
-
-  if (screen === "cashflow") {
-    return "Денежный поток";
-  }
-
-  if (screen === "incomes") {
-    return "Доходы";
-  }
-
-  if (screen === "analytics") {
-    return "Аналитика";
-  }
-
-  if (screen === "nextMonth") {
-    return "Бюджет грядущего месяца";
-  }
-
-  if (screen === "regular") {
-    return "Регулярные траты";
-  }
-
-  if (screen === "periodMonth" && selectedPeriodContext) {
-    return `${selectedPeriodContext.monthName} ${selectedPeriodContext.year}`;
-  }
-
-  if (screen === "categories") {
-    return "Настройки категорий";
-  }
-
-  if (screen === "cashflowAccounts") {
-    return "Счета cashflow";
-  }
-
-  if (screen === "cashflowFunds") {
-    return "Фонды cashflow";
-  }
-
-  if (screen === "settings") {
-    return "Настройка";
-  }
-
-  return "Бюджет текущего месяца";
-}
-
-function NavigationMenu({ currentScreen, onNavigate, selectedPeriodContext }) {
+function NavigationMenu({ currentScreen, onNavigate }) {
   return (
     <nav className="nav-list" aria-label="Основное меню">
       {navigationItems.map((item, index) => (
         <button
           key={item}
           className={
-            ((currentScreen === "months" || currentScreen === "periodMonth" || currentScreen === "month" || currentScreen === "nextMonth" || currentScreen === "regular") && index === 0) ||
-            (currentScreen === "cashflow" && item === "Денежный поток") ||
-            (currentScreen === "incomes" && item === "Доходы") ||
-            (currentScreen === "analytics" && item === "Аналитика") ||
-            ((currentScreen === "settings" || currentScreen === "categories" || currentScreen === "cashflowAccounts" || currentScreen === "cashflowFunds") && item === "Настройка")
+            isNavigationItemActive(currentScreen, item, index)
               ? "nav-item active"
               : "nav-item"
           }
           type="button"
-          onClick={() => onNavigate(item, index, selectedPeriodContext)}
+          onClick={() => onNavigate(item, index)}
         >
           {item}
         </button>
       ))}
     </nav>
-  );
+  )
+}
+
+function MobileFooterNav({ currentScreen, onNavigate }) {
+  const activeKey = getMobileFooterKey(currentScreen)
+
+  return (
+    <nav className="mobile-footer-nav" aria-label="Нижнее меню">
+      <div className="mobile-footer-nav-track">
+        {mobileFooterItems.map((item) => (
+          <button
+            key={item.key}
+            type="button"
+            className={
+              item.key === activeKey
+                ? "mobile-footer-item active"
+                : "mobile-footer-item"
+            }
+            aria-current={item.key === activeKey ? "page" : undefined}
+            onClick={() => onNavigate(item.key)}
+          >
+            <span className="mobile-footer-item-icon" aria-hidden="true">
+              {item.icon}
+            </span>
+            <span className="mobile-footer-item-label">{item.label}</span>
+          </button>
+        ))}
+      </div>
+    </nav>
+  )
 }
 
 function CategorySettingsScreen({
@@ -4873,17 +5597,17 @@ function CategorySettingsScreen({
   onRequestDelete,
 }) {
   const usageCountByLabel = useMemo(() => {
-    const counts = new Map();
+    const counts = new Map()
     members.forEach((member) => {
       member.expenses.forEach((expense) => {
-        counts.set(expense.category, (counts.get(expense.category) ?? 0) + 1);
-      });
-    });
+        counts.set(expense.category, (counts.get(expense.category) ?? 0) + 1)
+      })
+    })
     regularExpenses.forEach((template) => {
-      counts.set(template.category, (counts.get(template.category) ?? 0) + 1);
-    });
-    return counts;
-  }, [members, regularExpenses]);
+      counts.set(template.category, (counts.get(template.category) ?? 0) + 1)
+    })
+    return counts
+  }, [members, regularExpenses])
 
   return (
     <>
@@ -4897,37 +5621,54 @@ function CategorySettingsScreen({
         <p className="eyebrow">Настройка приложения</p>
         <h1>Настройки категорий</h1>
         <p className="page-note">
-          Управляй категориями, которые потом используются в попапах создания и изменения трат.
+          Управляй категориями, которые потом используются в попапах создания и
+          изменения трат.
         </p>
       </header>
 
       <section className="card category-settings-screen-card">
         <div className="category-settings-toolbar">
-          <button className="primary-action-button" type="button" onClick={onOpenCreate}>
+          <button
+            className="primary-action-button"
+            type="button"
+            onClick={onOpenCreate}
+          >
             Добавить категорию
           </button>
         </div>
 
         <div className="category-admin-list">
           {categories.map((category) => {
-            const usageCount = usageCountByLabel.get(category.label) ?? 0;
+            const usageCount = usageCountByLabel.get(category.label) ?? 0
 
             return (
               <div key={category.id} className="category-admin-item">
                 <div className="category-admin-main">
-                  <div className="category-admin-visual" style={{ background: category.color }} />
+                  <div
+                    className="category-admin-visual"
+                    style={{ background: category.color }}
+                  />
                   <div className="category-admin-content">
                     <div className="category-admin-chip-row">
-                      <span className="category-admin-icon">{category.icon}</span>
-                      <div className="category-admin-chip">{category.label}</div>
+                      <span className="category-admin-icon">
+                        {category.icon}
+                      </span>
+                      <div className="category-admin-chip">
+                        {category.label}
+                      </div>
                     </div>
                     <div className="category-admin-usage">
-                      Используется: {usageCount} {usageCount === 1 ? "раз" : "мест"}
+                      Используется: {usageCount}{" "}
+                      {usageCount === 1 ? "раз" : "мест"}
                     </div>
                   </div>
                 </div>
                 <div className="category-admin-buttons">
-                  <button className="secondary-action-button" type="button" onClick={() => onOpenEdit(category)}>
+                  <button
+                    className="secondary-action-button"
+                    type="button"
+                    onClick={() => onOpenEdit(category)}
+                  >
                     Изменить
                   </button>
                   <button
@@ -4939,51 +5680,77 @@ function CategorySettingsScreen({
                   </button>
                 </div>
               </div>
-            );
+            )
           })}
         </div>
       </section>
     </>
-  );
+  )
 }
 
-function CategoryEditorModal({ category, members, categoriesCount, onClose, onSave }) {
-  const isCreateMode = !category;
-  const colorInputRef = useRef(null);
-  const [isColorManuallyEdited, setIsColorManuallyEdited] = useState(Boolean(category?.color));
+function CategoryEditorModal({
+  category,
+  members,
+  regularExpenses,
+  categoriesCount,
+  onClose,
+  onSave,
+}) {
+  const isCreateMode = !category
+  const colorInputRef = useRef(null)
+  const [isColorManuallyEdited, setIsColorManuallyEdited] = useState(
+    Boolean(category?.color)
+  )
   const [draft, setDraft] = useState(
     category ?? {
       id: null,
       icon: "",
       label: "",
       color: getDefaultCategoryColor("", categoriesCount),
-    },
-  );
+    }
+  )
   const usageCount = useMemo(() => {
     if (!category) {
-      return 0;
+      return 0
     }
-    return members.reduce(
-      (sum, member) => sum + member.expenses.filter((expense) => expense.category === category.label).length,
-      0,
-    );
-  }, [category, members]);
+    const expenseUsageCount = members.reduce(
+      (sum, member) =>
+        sum +
+        member.expenses.filter((expense) => expense.category === category.label)
+          .length,
+      0
+    )
+    const regularUsageCount = regularExpenses.filter(
+      (template) => template.category === category.label
+    ).length
+    return expenseUsageCount + regularUsageCount
+  }, [category, members, regularExpenses])
 
   const handleSubmit = () => {
-    const icon = draft.icon.trim();
-    const label = draft.label.trim();
+    const icon = draft.icon.trim()
+    const label = draft.label.trim()
     if (!icon || !label) {
-      return;
+      return
     }
     onSave(
       category,
-      { ...(category ?? {}), id: draft.id ?? `category-${Date.now()}`, icon, label, color: draft.color },
-      usageCount,
-    );
-  };
+      {
+        ...(category ?? {}),
+        id: draft.id ?? `category-${Date.now()}`,
+        icon,
+        label,
+        color: draft.color,
+      },
+      usageCount
+    )
+  }
 
   return (
-    <ModalShell title={isCreateMode ? "Добавить категорию" : "Изменить категорию"} onClose={onClose} compact>
+    <ModalShell
+      title={isCreateMode ? "Добавить категорию" : "Изменить категорию"}
+      onClose={onClose}
+      compact
+    >
       <div className="modal-header">
         <h2>{isCreateMode ? "Добавить категорию" : "Изменить категорию"}</h2>
       </div>
@@ -4998,13 +5765,13 @@ function CategoryEditorModal({ category, members, categoriesCount, onClose, onSa
             value={draft.icon}
             onChange={(event) =>
               setDraft((current) => {
-                const nextIcon = event.target.value;
+                const nextIcon = event.target.value
                 const nextColor =
                   isCreateMode && !isColorManuallyEdited
                     ? getDefaultCategoryColor(nextIcon, categoriesCount)
-                    : current.color;
+                    : current.color
 
-                return { ...current, icon: nextIcon, color: nextColor };
+                return { ...current, icon: nextIcon, color: nextColor }
               })
             }
           />
@@ -5017,7 +5784,9 @@ function CategoryEditorModal({ category, members, categoriesCount, onClose, onSa
           <input
             placeholder="Например, Жильё"
             value={draft.label}
-            onChange={(event) => setDraft((current) => ({ ...current, label: event.target.value }))}
+            onChange={(event) =>
+              setDraft((current) => ({ ...current, label: event.target.value }))
+            }
           />
         </div>
 
@@ -5027,7 +5796,10 @@ function CategoryEditorModal({ category, members, categoriesCount, onClose, onSa
           </span>
           <div className="category-color-field">
             <div className="category-color-preview-row">
-              <div className="category-color-preview" style={{ background: draft.color }} />
+              <div
+                className="category-color-preview"
+                style={{ background: draft.color }}
+              />
               <button
                 className="secondary-action-button"
                 type="button"
@@ -5042,8 +5814,11 @@ function CategoryEditorModal({ category, members, categoriesCount, onClose, onSa
               type="color"
               value={draft.color}
               onChange={(event) => {
-                setIsColorManuallyEdited(true);
-                setDraft((current) => ({ ...current, color: event.target.value }));
+                setIsColorManuallyEdited(true)
+                setDraft((current) => ({
+                  ...current,
+                  color: event.target.value,
+                }))
               }}
             />
           </div>
@@ -5051,21 +5826,30 @@ function CategoryEditorModal({ category, members, categoriesCount, onClose, onSa
 
         {usageCount > 0 && !isCreateMode ? (
           <p className="category-editor-note">
-            Категория используется в {usageCount} местах. Изменение повлияет на существующие траты и аналитику.
+            Категория используется в {usageCount} местах. Изменение повлияет на
+            существующие траты и аналитику.
           </p>
         ) : null}
 
         <div className="category-settings-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onClose}
+          >
             Отмена
           </button>
-          <button className="primary-action-button" type="button" onClick={handleSubmit}>
+          <button
+            className="primary-action-button"
+            type="button"
+            onClick={handleSubmit}
+          >
             Сохранить
           </button>
         </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
 function CategoryConfirmModal({ title, description, onClose, onConfirm }) {
@@ -5075,53 +5859,80 @@ function CategoryConfirmModal({ title, description, onClose, onConfirm }) {
         <p className="inline-confirm-title">{title}</p>
         <p className="inline-confirm-text">{description}</p>
         <div className="inline-confirm-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onClose}
+          >
             Отмена
           </button>
-          <button className="secondary-action-button danger solid" type="button" onClick={onConfirm}>
+          <button
+            className="secondary-action-button danger solid"
+            type="button"
+            onClick={onConfirm}
+          >
             Да, продолжить
           </button>
         </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
 function YearDeleteConfirmModal({ year, onClose, onConfirm }) {
-  const [value, setValue] = useState("");
-  const expected = `DELETE ${year}`;
-  const isValid = value.trim() === expected;
+  const [value, setValue] = useState("")
+  const expected = `DELETE ${year}`
+  const isValid = value.trim() === expected
 
   return (
     <ModalShell title="Удалить год" onClose={onClose} compact>
       <div className="confirm-dialog standalone-confirm-dialog">
         <p className="inline-confirm-title">Удалить {year} год?</p>
         <p className="inline-confirm-text">
-          Это действие лучше защищено от случайного удаления. Введи <strong>{expected}</strong>, чтобы продолжить.
+          Это действие лучше защищено от случайного удаления. Введи{" "}
+          <strong>{expected}</strong>, чтобы продолжить.
         </p>
         <label className="field">
-          <span className="field-head"><span>Подтверждение *</span></span>
-          <input value={value} placeholder={expected} onChange={(event) => setValue(event.target.value)} />
+          <span className="field-head">
+            <span>Подтверждение *</span>
+          </span>
+          <input
+            value={value}
+            placeholder={expected}
+            onChange={(event) => setValue(event.target.value)}
+          />
         </label>
         <div className="inline-confirm-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onClose}
+          >
             Отмена
           </button>
-          <button className="secondary-action-button danger solid" type="button" disabled={!isValid} onClick={onConfirm}>
+          <button
+            className="secondary-action-button danger solid"
+            type="button"
+            disabled={!isValid}
+            onClick={onConfirm}
+          >
             Да, удалить
           </button>
         </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
 function YearAddModal({ trackedYears, onClose, onConfirm }) {
-  const currentYear = getCurrentMonthContext().year;
-  const candidateYears = Array.from({ length: 11 }, (_, index) => currentYear - 2 + index).filter(
-    (year) => !trackedYears.includes(year),
-  );
-  const [selectedYear, setSelectedYear] = useState(candidateYears[0] ? String(candidateYears[0]) : "");
+  const currentYear = getCurrentMonthContext().year
+  const candidateYears = Array.from(
+    { length: 11 },
+    (_, index) => currentYear - 2 + index
+  ).filter((year) => !trackedYears.includes(year))
+  const [selectedYear, setSelectedYear] = useState(
+    candidateYears[0] ? String(candidateYears[0]) : ""
+  )
 
   return (
     <ModalShell title="Добавить учетный год" onClose={onClose} compact>
@@ -5132,18 +5943,31 @@ function YearAddModal({ trackedYears, onClose, onConfirm }) {
         </p>
         {candidateYears.length ? (
           <label className="field">
-            <span className="field-head"><span>Год *</span></span>
-            <select value={selectedYear} onChange={(event) => setSelectedYear(event.target.value)}>
+            <span className="field-head">
+              <span>Год *</span>
+            </span>
+            <select
+              value={selectedYear}
+              onChange={(event) => setSelectedYear(event.target.value)}
+            >
               {candidateYears.map((year) => (
-                <option key={year} value={year}>{year}</option>
+                <option key={year} value={year}>
+                  {year}
+                </option>
               ))}
             </select>
           </label>
         ) : (
-          <p className="cashflow-empty">Доступных новых лет для добавления сейчас нет.</p>
+          <p className="cashflow-empty">
+            Доступных новых лет для добавления сейчас нет.
+          </p>
         )}
         <div className="inline-confirm-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onClose}
+          >
             Отмена
           </button>
           <button
@@ -5157,24 +5981,31 @@ function YearAddModal({ trackedYears, onClose, onConfirm }) {
         </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
 function MonthRow({ month, onOpenCurrentMonth, onOpenMonth }) {
-  const meta = getMonthMetaByName(month.name);
+  const meta = getMonthMetaByName(month.name)
   const handleOpen = () => {
     if (month.isCurrent) {
-      onOpenCurrentMonth();
-      return;
+      onOpenCurrentMonth()
+      return
     }
 
-    onOpenMonth(month);
-  };
+    onOpenMonth(month)
+  }
 
   return (
-    <button className={month.isCurrent ? "month-row current" : "month-row"} type="button" onClick={handleOpen}>
+    <button
+      className={month.isCurrent ? "month-row current" : "month-row"}
+      type="button"
+      onClick={handleOpen}
+    >
       <div className="month-row-main">
-        <div className="month-row-icon" style={{ background: meta.bg, color: meta.tone }}>
+        <div
+          className="month-row-icon"
+          style={{ background: meta.bg, color: meta.tone }}
+        >
           {meta.icon}
         </div>
         <div className="month-row-copy">
@@ -5189,12 +6020,19 @@ function MonthRow({ month, onOpenCurrentMonth, onOpenMonth }) {
         </strong>
       </div>
     </button>
-  );
+  )
 }
 
-function YearCard({ yearData, expanded, onToggle, onDelete, onOpenCurrentMonth, onOpenMonth }) {
-  const currentYear = getCurrentMonthContext().year;
-  const canDeleteYear = yearData.year > currentYear;
+function YearCard({
+  yearData,
+  expanded,
+  onToggle,
+  onDelete,
+  onOpenCurrentMonth,
+  onOpenMonth,
+}) {
+  const currentYear = getCurrentMonthContext().year
+  const canDeleteYear = yearData.year > currentYear
 
   return (
     <section className="card year-card">
@@ -5206,7 +6044,11 @@ function YearCard({ yearData, expanded, onToggle, onDelete, onOpenCurrentMonth, 
           </div>
         </div>
         <div className="year-card-actions">
-          <button className="year-toggle-button" type="button" onClick={() => onToggle(yearData.year)}>
+          <button
+            className="year-toggle-button"
+            type="button"
+            onClick={() => onToggle(yearData.year)}
+          >
             {expanded ? "Свернуть" : "Развернуть"}
           </button>
         </div>
@@ -5226,7 +6068,11 @@ function YearCard({ yearData, expanded, onToggle, onDelete, onOpenCurrentMonth, 
           </div>
           <div className="year-card-footer">
             {canDeleteYear ? (
-              <button className="year-delete-button" type="button" onClick={() => onDelete(yearData.year)}>
+              <button
+                className="year-delete-button"
+                type="button"
+                onClick={() => onDelete(yearData.year)}
+              >
                 Удалить год
               </button>
             ) : null}
@@ -5234,7 +6080,7 @@ function YearCard({ yearData, expanded, onToggle, onDelete, onOpenCurrentMonth, 
         </>
       ) : null}
     </section>
-  );
+  )
 }
 
 function MonthsScreen({
@@ -5259,8 +6105,8 @@ function MonthsScreen({
         <p className="eyebrow">Вход в бюджет</p>
         <h1>Бюджет</h1>
         <p className="page-note">
-          Отсюда можно быстро перейти в текущий месяц, в грядущий месяц и в любой другой период для
-          просмотра и планирования бюджета.
+          Отсюда можно быстро перейти в текущий месяц, в грядущий месяц и в
+          любой другой период для просмотра и планирования бюджета.
         </p>
       </header>
 
@@ -5270,15 +6116,25 @@ function MonthsScreen({
             <div className="budget-hub-copy">
               <span className="budget-hub-kicker">Переходы по времени</span>
               <h2>Работа с месяцами</h2>
-              <p>Быстро открывай текущий, следующий или любой другой месяц из годового списка ниже.</p>
+              <p>
+                Быстро открывай текущий, следующий или любой другой месяц из
+                годового списка ниже.
+              </p>
             </div>
 
             <div className="budget-hub-actions budget-hub-actions-primary">
-              <button className="budget-hub-action budget-hub-action-strong" type="button" onClick={onOpenCurrentMonth}>
+              <button
+                className="budget-hub-action budget-hub-action-strong"
+                type="button"
+                onClick={onOpenCurrentMonth}
+              >
                 <span
                   className="budget-hub-action-icon"
                   aria-hidden="true"
-                  style={{ background: currentMonthMeta.bg, color: currentMonthMeta.tone }}
+                  style={{
+                    background: currentMonthMeta.bg,
+                    color: currentMonthMeta.tone,
+                  }}
                 >
                   {currentMonthMeta.icon}
                 </span>
@@ -5288,11 +6144,18 @@ function MonthsScreen({
                 </span>
               </button>
 
-              <button className="budget-hub-action budget-hub-action-accent" type="button" onClick={onOpenNextMonth}>
+              <button
+                className="budget-hub-action budget-hub-action-accent"
+                type="button"
+                onClick={onOpenNextMonth}
+              >
                 <span
                   className="budget-hub-action-icon"
                   aria-hidden="true"
-                  style={{ background: nextMonthMeta.bg, color: nextMonthMeta.tone }}
+                  style={{
+                    background: nextMonthMeta.bg,
+                    color: nextMonthMeta.tone,
+                  }}
                 >
                   {nextMonthMeta.icon}
                 </span>
@@ -5305,9 +6168,15 @@ function MonthsScreen({
               <button
                 className="budget-hub-action"
                 type="button"
-                onClick={() => document.getElementById("budget-years-stack")?.scrollIntoView({ behavior: "smooth", block: "start" })}
+                onClick={() =>
+                  document
+                    .getElementById("budget-years-stack")
+                    ?.scrollIntoView({ behavior: "smooth", block: "start" })
+                }
               >
-                <span className="budget-hub-action-icon" aria-hidden="true">🗓️</span>
+                <span className="budget-hub-action-icon" aria-hidden="true">
+                  🗓️
+                </span>
                 <span className="budget-hub-action-copy">
                   <strong>Все месяцы</strong>
                   <small>Прошлые и будущие периоды</small>
@@ -5320,20 +6189,35 @@ function MonthsScreen({
             <div className="budget-hub-copy">
               <span className="budget-hub-kicker">Быстрые действия</span>
               <h2>Добавление и шаблоны</h2>
-              <p>Создавай траты из одного места и открывай шаблоны регулярных платежей отдельным блоком.</p>
+              <p>
+                Создавай траты из одного места и открывай шаблоны регулярных
+                платежей отдельным блоком.
+              </p>
             </div>
 
             <div className="budget-hub-actions budget-hub-actions-secondary">
-              <button className="budget-hub-action budget-hub-action-strong" type="button" onClick={onCreateExpense}>
-                <span className="budget-hub-action-icon" aria-hidden="true">＋</span>
+              <button
+                className="budget-hub-action budget-hub-action-strong"
+                type="button"
+                onClick={onCreateExpense}
+              >
+                <span className="budget-hub-action-icon" aria-hidden="true">
+                  ＋
+                </span>
                 <span className="budget-hub-action-copy">
                   <strong>Добавить трату</strong>
                   <small>Разовая или новая позиция месяца</small>
                 </span>
               </button>
 
-              <button className="budget-hub-action" type="button" onClick={onOpenRegular}>
-                <span className="budget-hub-action-icon" aria-hidden="true">↻</span>
+              <button
+                className="budget-hub-action"
+                type="button"
+                onClick={onOpenRegular}
+              >
+                <span className="budget-hub-action-icon" aria-hidden="true">
+                  ↻
+                </span>
                 <span className="budget-hub-action-copy">
                   <strong>Регулярные траты</strong>
                   <small>Шаблоны ежемесячных и годовых платежей</small>
@@ -5345,7 +6229,11 @@ function MonthsScreen({
       </section>
 
       <div className="months-utility-bar">
-        <button className="budget-year-create-button" type="button" onClick={onAddYear}>
+        <button
+          className="budget-year-create-button"
+          type="button"
+          onClick={onAddYear}
+        >
           <span aria-hidden="true">＋</span>
           <span>Добавить новый учетный год</span>
         </button>
@@ -5365,15 +6253,15 @@ function MonthsScreen({
         ))}
       </div>
     </>
-  );
+  )
 }
 
 function formatRegularSchedule(template) {
   if (template.frequency === "Раз в год") {
-    return `${template.month} · ${template.dayOfMonth} число`;
+    return `${template.month} · ${template.dayOfMonth} число`
   }
 
-  return `Каждый месяц · ${template.dayOfMonth} число`;
+  return `Каждый месяц · ${template.dayOfMonth} число`
 }
 
 function AnalyticsScreen({
@@ -5387,16 +6275,21 @@ function AnalyticsScreen({
   monthsWithData,
   incomeOutcome,
 }) {
-  const topCategory = categoryBreakdown[0] ?? null;
-  const averageMonthBudget = monthsWithData > 0 ? Math.round(totalBudget / monthsWithData) : 0;
-  const totalIncome = incomeOutcome.totalIncome;
-  const totalExpenses = incomeOutcome.totalExpenses;
-  const result = incomeOutcome.result;
-  const expenseShare = totalIncome > 0 ? Math.min((totalExpenses / totalIncome) * 100, 100) : 0;
-  const positiveResultShare = totalIncome > 0 && result > 0 ? Math.max((result / totalIncome) * 100, 0) : 0;
-  const hasAnyIncomeData = totalIncome > 0;
-  const profitLabel = result >= 0 ? "Ожидаемая прибыль" : "Ожидаемый дефицит";
-  const profitToneClass = result >= 0 ? "" : " danger";
+  const topCategory = categoryBreakdown[0] ?? null
+  const averageMonthBudget =
+    monthsWithData > 0 ? Math.round(totalBudget / monthsWithData) : 0
+  const totalIncome = incomeOutcome.totalIncome
+  const totalExpenses = incomeOutcome.totalExpenses
+  const result = incomeOutcome.result
+  const expenseShare =
+    totalIncome > 0 ? Math.min((totalExpenses / totalIncome) * 100, 100) : 0
+  const positiveResultShare =
+    totalIncome > 0 && result > 0
+      ? Math.max((result / totalIncome) * 100, 0)
+      : 0
+  const hasAnyIncomeData = totalIncome > 0
+  const profitLabel = result >= 0 ? "Ожидаемая прибыль" : "Ожидаемый дефицит"
+  const profitToneClass = result >= 0 ? "" : " danger"
 
   return (
     <>
@@ -5404,8 +6297,8 @@ function AnalyticsScreen({
         <p className="eyebrow">Обзор бюджета</p>
         <h1>Аналитика</h1>
         <p className="page-note">
-          Смотри структуру трат по категориям за весь год и быстро замечай, какие направления съедают
-          больше всего бюджета.
+          Смотри структуру трат по категориям за весь год и быстро замечай,
+          какие направления съедают больше всего бюджета.
         </p>
       </header>
 
@@ -5413,14 +6306,24 @@ function AnalyticsScreen({
         <div className="analytics-summary-head">
           <div>
             <h2>Годовой анализ</h2>
-            <p>Выбери год, за который хочешь посмотреть общую структуру расходов.</p>
+            <p>
+              Выбери год, за который хочешь посмотреть общую структуру расходов.
+            </p>
           </div>
-          <div className="analytics-year-switcher" role="tablist" aria-label="Выбор года для аналитики">
+          <div
+            className="analytics-year-switcher"
+            role="tablist"
+            aria-label="Выбор года для аналитики"
+          >
             {availableYears.map((year) => (
               <button
                 key={year}
                 type="button"
-                className={year === selectedYear ? "analytics-year-chip active" : "analytics-year-chip"}
+                className={
+                  year === selectedYear
+                    ? "analytics-year-chip active"
+                    : "analytics-year-chip"
+                }
                 onClick={() => onSelectYear(year)}
                 aria-pressed={year === selectedYear}
               >
@@ -5432,21 +6335,31 @@ function AnalyticsScreen({
 
         <div className="analytics-kpi-grid">
           <div className="analytics-kpi-card">
-            <span className="analytics-kpi-label">Бюджет за {selectedYear} год</span>
-            <strong className="analytics-kpi-value">{formatCurrency(totalBudget)} Kč</strong>
+            <span className="analytics-kpi-label">
+              Бюджет за {selectedYear} год
+            </span>
+            <strong className="analytics-kpi-value">
+              {formatCurrency(totalBudget)} Kč
+            </strong>
           </div>
           <div className="analytics-kpi-card">
             <span className="analytics-kpi-label">Категорий с тратами</span>
-            <strong className="analytics-kpi-value">{categoryBreakdown.length}</strong>
+            <strong className="analytics-kpi-value">
+              {categoryBreakdown.length}
+            </strong>
           </div>
           <div className="analytics-kpi-card">
             <span className="analytics-kpi-label">Средний активный месяц</span>
-            <strong className="analytics-kpi-value">{formatCurrency(averageMonthBudget)} Kč</strong>
+            <strong className="analytics-kpi-value">
+              {formatCurrency(averageMonthBudget)} Kč
+            </strong>
           </div>
           <div className="analytics-kpi-card">
             <span className="analytics-kpi-label">Самая крупная категория</span>
             <strong className="analytics-kpi-value">
-              {topCategory ? `${topCategory.icon} ${topCategory.label}` : "Нет данных"}
+              {topCategory
+                ? `${topCategory.icon} ${topCategory.label}`
+                : "Нет данных"}
             </strong>
           </div>
         </div>
@@ -5466,7 +6379,10 @@ function AnalyticsScreen({
             ) : (
               <section className="card analytics-empty-card">
                 <h2>Пока нет расходов за {selectedYear} год</h2>
-                <p>Как только в выбранном году появятся траты или планы по месяцам, здесь появится структура по категориям.</p>
+                <p>
+                  Как только в выбранном году появятся траты или планы по
+                  месяцам, здесь появится структура по категориям.
+                </p>
               </section>
             )}
 
@@ -5482,34 +6398,51 @@ function AnalyticsScreen({
                     <strong>{`Доходы ${formatCurrency(totalIncome)} Kč`}</strong>
                   </div>
 
-                  <div className="annual-outcome-balance-bar" aria-label={`Расходы и результат за ${selectedYear} год`}>
+                  <div
+                    className="annual-outcome-balance-bar"
+                    aria-label={`Расходы и результат за ${selectedYear} год`}
+                  >
                     <div
                       className="annual-outcome-expense-fill"
-                      style={{ width: `${Math.max(expenseShare, totalExpenses > 0 ? 8 : 0)}%` }}
+                      style={{
+                        width: `${Math.max(expenseShare, totalExpenses > 0 ? 8 : 0)}%`,
+                      }}
                     />
                     {positiveResultShare > 0 ? (
                       <div
                         className="annual-outcome-profit-fill"
-                        style={{ width: `${Math.max(positiveResultShare, 8)}%` }}
+                        style={{
+                          width: `${Math.max(positiveResultShare, 8)}%`,
+                        }}
                       />
                     ) : null}
                   </div>
 
                   <div className="annual-outcome-split">
                     <div className="annual-outcome-metric">
-                      <span className="annual-outcome-metric-label">Ожидаемые расходы</span>
-                      <strong className="annual-outcome-metric-value">{formatCurrency(totalExpenses)} Kč</strong>
+                      <span className="annual-outcome-metric-label">
+                        Ожидаемые расходы
+                      </span>
+                      <strong className="annual-outcome-metric-value">
+                        {formatCurrency(totalExpenses)} Kč
+                      </strong>
                     </div>
                     <div className="annual-outcome-metric align-end">
-                      <span className="annual-outcome-metric-label">{profitLabel}</span>
-                      <strong className={`annual-outcome-metric-value${profitToneClass}`}>
+                      <span className="annual-outcome-metric-label">
+                        {profitLabel}
+                      </span>
+                      <strong
+                        className={`annual-outcome-metric-value${profitToneClass}`}
+                      >
                         {formatCurrency(Math.abs(result))} Kč
                       </strong>
                     </div>
                   </div>
                 </>
               ) : (
-                <p className="analytics-ring-empty">Доходы по году ещё не добавлены.</p>
+                <p className="analytics-ring-empty">
+                  Доходы по году ещё не добавлены.
+                </p>
               )}
             </section>
           </div>
@@ -5535,11 +6468,14 @@ function AnalyticsScreen({
       ) : (
         <section className="card analytics-empty-card">
           <h2>Пока нет данных за {selectedYear} год</h2>
-          <p>Как только в выбранном году появятся траты или планы по месяцам, здесь появится диаграмма.</p>
+          <p>
+            Как только в выбранном году появятся траты или планы по месяцам,
+            здесь появится диаграмма.
+          </p>
         </section>
       )}
     </>
-  );
+  )
 }
 
 function IncomeScreen({
@@ -5556,7 +6492,8 @@ function IncomeScreen({
         <p className="eyebrow">План и факт доходов</p>
         <h1>Доходы</h1>
         <p className="page-note">
-          Здесь можно вести ожидаемые и фактические доходы Ромы, Саши и общие поступления на любой месяц.
+          Здесь можно вести ожидаемые и фактические доходы Ромы, Саши и общие
+          поступления на любой месяц.
         </p>
       </header>
 
@@ -5564,14 +6501,25 @@ function IncomeScreen({
         <div className="analytics-summary-head">
           <div>
             <h2>Доходы по году</h2>
-            <p>Для каждого месяца можно отдельно задать ожидаемый доход Ромы, Саши и фактический семейный доход.</p>
+            <p>
+              Для каждого месяца можно отдельно задать ожидаемый доход Ромы,
+              Саши и фактический семейный доход.
+            </p>
           </div>
-          <div className="analytics-year-switcher" role="tablist" aria-label="Выбор года для доходов">
+          <div
+            className="analytics-year-switcher"
+            role="tablist"
+            aria-label="Выбор года для доходов"
+          >
             {availableYears.map((year) => (
               <button
                 key={year}
                 type="button"
-                className={year === selectedYear ? "analytics-year-chip active" : "analytics-year-chip"}
+                className={
+                  year === selectedYear
+                    ? "analytics-year-chip active"
+                    : "analytics-year-chip"
+                }
                 onClick={() => onSelectYear(year)}
                 aria-pressed={year === selectedYear}
               >
@@ -5584,15 +6532,21 @@ function IncomeScreen({
         <div className="analytics-kpi-grid income-kpi-grid compact">
           <div className="analytics-kpi-card">
             <span className="analytics-kpi-label">Факт за год</span>
-            <strong className="analytics-kpi-value">{formatCurrency(summary.received)} Kč</strong>
+            <strong className="analytics-kpi-value">
+              {formatCurrency(summary.received)} Kč
+            </strong>
           </div>
           <div className="analytics-kpi-card">
             <span className="analytics-kpi-label">По плану без факта</span>
-            <strong className="analytics-kpi-value">{formatCurrency(summary.expectedFuture)} Kč</strong>
+            <strong className="analytics-kpi-value">
+              {formatCurrency(summary.expectedFuture)} Kč
+            </strong>
           </div>
           <div className="analytics-kpi-card">
             <span className="analytics-kpi-label">План на год</span>
-            <strong className="analytics-kpi-value">{formatCurrency(summary.totalMixed)} Kč</strong>
+            <strong className="analytics-kpi-value">
+              {formatCurrency(summary.totalMixed)} Kč
+            </strong>
           </div>
         </div>
       </section>
@@ -5633,7 +6587,7 @@ function IncomeScreen({
         </div>
       </section>
     </>
-  );
+  )
 }
 
 function RegularExpenseTemplateCard({
@@ -5646,11 +6600,15 @@ function RegularExpenseTemplateCard({
   onStop,
   onResume,
 }) {
-  const currentAmount = getRegularAmountForPeriod(template, currentMonthContext.year, currentMonthContext.monthName);
-  const upcomingChange = getUpcomingRegularChange(template, currentMonthContext);
-  const stopNote = getRegularStopNote(template, currentMonthContext);
-  const categoryMeta = getCategoryMeta(template.category, categories);
-  const isStopped = isRegularTemplateScheduledToStop(template);
+  const currentAmount = getRegularAmountForPeriod(
+    template,
+    currentMonthContext.year,
+    currentMonthContext.monthName
+  )
+  const upcomingChange = getUpcomingRegularChange(template, currentMonthContext)
+  const stopNote = getRegularStopNote(template, currentMonthContext)
+  const categoryMeta = getCategoryMeta(template.category, categories)
+  const isStopped = isRegularTemplateScheduledToStop(template)
 
   return (
     <BudgetDataRow
@@ -5661,38 +6619,56 @@ function RegularExpenseTemplateCard({
         stopNote
           ? stopNote
           : upcomingChange
-          ? `С ${formatMonthYearGenitive(upcomingChange.effectiveMonth, upcomingChange.effectiveYear)}: ${formatCurrency(upcomingChange.amount)} Kč вместо ${formatCurrency(upcomingChange.previousAmount)} Kč`
-          : null
+            ? `С ${formatMonthYearGenitive(upcomingChange.effectiveMonth, upcomingChange.effectiveYear)}: ${formatCurrency(upcomingChange.amount)} Kč вместо ${formatCurrency(upcomingChange.previousAmount)} Kč`
+            : null
       }
       amount={currentAmount}
       dueLabel={formatRegularSchedule(template)}
-      secondaryLabel={template.cadence === "auto" ? "Автоплатеж" : "Ручной платеж"}
+      secondaryLabel={
+        template.cadence === "auto" ? "Автоплатеж" : "Ручной платеж"
+      }
       secondaryTone={template.cadence === "auto" ? "muted" : "default"}
       onOpen={onOpen}
-      actions={(
+      actions={
         <>
           {isStopped ? (
-            <button className="row-edit-button" type="button" onClick={onResume}>
+            <button
+              className="row-edit-button"
+              type="button"
+              onClick={onResume}
+            >
               Возобновить
             </button>
           ) : (
             <>
-              <button className="row-edit-button" type="button" onClick={onEdit}>
+              <button
+                className="row-edit-button"
+                type="button"
+                onClick={onEdit}
+              >
                 Изменить
               </button>
-              <button className="row-edit-button warning" type="button" onClick={onStop}>
+              <button
+                className="row-edit-button warning"
+                type="button"
+                onClick={onStop}
+              >
                 Остановить
               </button>
             </>
           )}
-          <button className="row-edit-button danger" type="button" onClick={onDelete}>
+          <button
+            className="row-edit-button danger"
+            type="button"
+            onClick={onDelete}
+          >
             Удалить
           </button>
         </>
-      )}
+      }
       rowClassName="regular-template-row"
     />
-  );
+  )
 }
 
 function RegularExpensesScreen({
@@ -5710,20 +6686,26 @@ function RegularExpensesScreen({
 }) {
   const ownerGroups = ownerOptions.map((owner) => {
     const ownerTemplates = regularExpenses.filter(
-      (template) => template.isActive !== false && template.owner === owner,
-    );
+      (template) => template.isActive !== false && template.owner === owner
+    )
 
     return {
       owner,
       monthly: ownerTemplates.filter(
-        (template) => template.frequency !== "Раз в год" && !isRegularTemplateScheduledToStop(template),
+        (template) =>
+          template.frequency !== "Раз в год" &&
+          !isRegularTemplateScheduledToStop(template)
       ),
       yearly: ownerTemplates.filter(
-        (template) => template.frequency === "Раз в год" && !isRegularTemplateScheduledToStop(template),
+        (template) =>
+          template.frequency === "Раз в год" &&
+          !isRegularTemplateScheduledToStop(template)
       ),
-      stopped: ownerTemplates.filter((template) => isRegularTemplateScheduledToStop(template)),
-    };
-  });
+      stopped: ownerTemplates.filter((template) =>
+        isRegularTemplateScheduledToStop(template)
+      ),
+    }
+  })
 
   return (
     <>
@@ -5731,8 +6713,9 @@ function RegularExpensesScreen({
         <p className="eyebrow">Шаблоны бюджета</p>
         <h1>Регулярные траты</h1>
         <p className="page-note">
-          Здесь живут регулярные шаблоны ежемесячных и ежегодных трат. Изменения суммы применяются
-          только к следующим периодам и не переписывают текущий месяц задним числом.
+          Здесь живут регулярные шаблоны ежемесячных и ежегодных трат. Изменения
+          суммы применяются только к следующим периодам и не переписывают
+          текущий месяц задним числом.
         </p>
       </header>
 
@@ -5755,7 +6738,11 @@ function RegularExpensesScreen({
             <strong>{summary.upcomingChanges}</strong>
           </div>
         </div>
-        <button className="primary-action-button" type="button" onClick={onCreate}>
+        <button
+          className="primary-action-button"
+          type="button"
+          onClick={onCreate}
+        >
           Добавить регулярную трату
         </button>
       </section>
@@ -5789,7 +6776,9 @@ function RegularExpensesScreen({
                   />
                 ))
               ) : (
-                <div className="regular-empty-state">Пока нет ежемесячных шаблонов.</div>
+                <div className="regular-empty-state">
+                  Пока нет ежемесячных шаблонов.
+                </div>
               )}
             </div>
             <button
@@ -5824,7 +6813,9 @@ function RegularExpensesScreen({
                   />
                 ))
               ) : (
-                <div className="regular-empty-state">Пока нет ежегодных шаблонов.</div>
+                <div className="regular-empty-state">
+                  Пока нет ежегодных шаблонов.
+                </div>
               )}
             </div>
             <button
@@ -5840,7 +6831,10 @@ function RegularExpensesScreen({
             <div className="regular-group-head">
               <div>
                 <h3>Остановленные</h3>
-                <p>Траты, которые останутся в прошлых месяцах, но исчезнут из будущих периодов.</p>
+                <p>
+                  Траты, которые останутся в прошлых месяцах, но исчезнут из
+                  будущих периодов.
+                </p>
               </div>
             </div>
             <div className="regular-template-list">
@@ -5859,22 +6853,33 @@ function RegularExpensesScreen({
                   />
                 ))
               ) : (
-                <div className="regular-empty-state">Пока нет остановленных регулярных трат.</div>
+                <div className="regular-empty-state">
+                  Пока нет остановленных регулярных трат.
+                </div>
               )}
             </div>
           </div>
         </section>
       ))}
     </>
-  );
+  )
 }
 
-function ProjectedExpenseRow({ expense, categories, onOpenTemplate, onOpenExpense, onEditExpense }) {
-  const isAutoPayment = expense.cadence === "auto";
-  const isTemplateExpense = Boolean(expense.templateId);
-  const isRecurring = expense.frequency === "Каждый месяц" || expense.frequency === "Раз в год" || isTemplateExpense;
-  const transactionTypeLabel = isAutoPayment ? "Автоплатеж" : "Ручной платеж";
-  const categoryMeta = getCategoryMeta(expense.category, categories);
+function ProjectedExpenseRow({
+  expense,
+  categories,
+  onOpenTemplate,
+  onOpenExpense,
+  onEditExpense,
+}) {
+  const isAutoPayment = expense.cadence === "auto"
+  const isTemplateExpense = Boolean(expense.templateId)
+  const isRecurring =
+    expense.frequency === "Каждый месяц" ||
+    expense.frequency === "Раз в год" ||
+    isTemplateExpense
+  const transactionTypeLabel = isAutoPayment ? "Автоплатеж" : "Ручной платеж"
+  const categoryMeta = getCategoryMeta(expense.category, categories)
 
   return (
     <BudgetDataRow
@@ -5888,14 +6893,26 @@ function ProjectedExpenseRow({ expense, categories, onOpenTemplate, onOpenExpens
       secondaryLabel={transactionTypeLabel}
       secondaryTone={isAutoPayment ? "muted" : "default"}
       showRecurringBadge={isRecurring}
-      onOpen={() => (isTemplateExpense ? onOpenTemplate?.() : onOpenExpense?.(expense))}
+      onOpen={() =>
+        isTemplateExpense ? onOpenTemplate?.() : onOpenExpense?.(expense)
+      }
       rowClassName="projected-expense-row"
     />
-  );
+  )
 }
 
-function ProjectedMemberCard({ member, categories, onOpenTemplate, onOpenExpense, onEditExpense, onAddExpense }) {
-  const budget = member.expenses.reduce((sum, expense) => sum + expense.amount, 0);
+function ProjectedMemberCard({
+  member,
+  categories,
+  onOpenTemplate,
+  onOpenExpense,
+  onEditExpense,
+  onAddExpense,
+}) {
+  const budget = member.expenses.reduce(
+    (sum, expense) => sum + expense.amount,
+    0
+  )
 
   return (
     <section className="card member-card projected-member-card">
@@ -5904,7 +6921,9 @@ function ProjectedMemberCard({ member, categories, onOpenTemplate, onOpenExpense
           <div className="member-avatar">{member.emoji}</div>
           <div>
             <div className="member-name">{member.name}</div>
-            <div className="member-budget">Прогноз {formatCurrency(budget)} Kč</div>
+            <div className="member-budget">
+              Прогноз {formatCurrency(budget)} Kč
+            </div>
           </div>
         </div>
       </div>
@@ -5922,15 +6941,21 @@ function ProjectedMemberCard({ member, categories, onOpenTemplate, onOpenExpense
             />
           ))
         ) : (
-          <div className="budget-empty-state">Пока нет трат в грядущем месяце.</div>
+          <div className="budget-empty-state">
+            Пока нет трат в грядущем месяце.
+          </div>
         )}
       </div>
 
-      <button className="add-expense-button" type="button" onClick={() => onAddExpense(member)}>
+      <button
+        className="add-expense-button"
+        type="button"
+        onClick={() => onAddExpense(member)}
+      >
         Добавить
       </button>
     </section>
-  );
+  )
 }
 
 function NextMonthBudgetScreen({
@@ -5958,8 +6983,15 @@ function NextMonthBudgetScreen({
       </header>
 
       <div className="dashboard-grid">
-        <MonthFinancialBoard monthLabel={monthLabel} monthMeta={monthMeta} summary={financialSummary} />
-        <CategoryBreakdownCard items={categoryBreakdown} total={financialSummary.totalBudget} />
+        <MonthFinancialBoard
+          monthLabel={monthLabel}
+          monthMeta={monthMeta}
+          summary={financialSummary}
+        />
+        <CategoryBreakdownCard
+          items={categoryBreakdown}
+          total={financialSummary.totalBudget}
+        />
       </div>
 
       <div className="members-grid">
@@ -5976,13 +7008,22 @@ function NextMonthBudgetScreen({
         ))}
       </div>
     </>
-  );
+  )
 }
 
-function CashflowMetricCard({ label, value, accent = false, note = "", onClick = null }) {
-  const className = [accent ? "card cashflow-metric-card accent" : "card cashflow-metric-card", onClick ? "clickable" : ""]
+function CashflowMetricCard({
+  label,
+  value,
+  accent = false,
+  note = "",
+  onClick = null,
+}) {
+  const className = [
+    accent ? "card cashflow-metric-card accent" : "card cashflow-metric-card",
+    onClick ? "clickable" : "",
+  ]
     .filter(Boolean)
-    .join(" ");
+    .join(" ")
 
   return (
     <section
@@ -5992,8 +7033,8 @@ function CashflowMetricCard({ label, value, accent = false, note = "", onClick =
         onClick
           ? (event) => {
               if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onClick();
+                event.preventDefault()
+                onClick()
               }
             }
           : undefined
@@ -6005,33 +7046,38 @@ function CashflowMetricCard({ label, value, accent = false, note = "", onClick =
       <strong className="cashflow-metric-value">{value}</strong>
       {note ? <span className="cashflow-metric-note">{note}</span> : null}
     </section>
-  );
+  )
 }
 
 function CashflowReserveTargetModal({ fund, onClose, onSave }) {
   const [form, setForm] = useState(() => ({
     targetMode: fund?.targetMode ?? "auto_average_mandatory_budget",
     targetMultiplier:
-      fund?.targetMultiplier != null && Number.isFinite(Number(fund.targetMultiplier))
+      fund?.targetMultiplier != null &&
+      Number.isFinite(Number(fund.targetMultiplier))
         ? String(fund.targetMultiplier)
         : fund?.fundType === "emergency_reserve"
           ? "3"
           : "2",
     manualTargetAmount:
-      fund?.manualTargetAmount != null && Number.isFinite(Number(fund.manualTargetAmount))
+      fund?.manualTargetAmount != null &&
+      Number.isFinite(Number(fund.manualTargetAmount))
         ? String(fund.manualTargetAmount)
         : "",
-  }));
+  }))
 
-  const isManual = form.targetMode === "manual";
-  const parsedMultiplier = Number(form.targetMultiplier || 0);
-  const parsedManualTarget = Number(form.manualTargetAmount || 0);
-  const isValid = isManual ? parsedManualTarget > 0 : parsedMultiplier > 0;
-  const title = fund?.fundType === "emergency_reserve" ? "Подушка безопасности" : "Бюджетный фонд";
+  const isManual = form.targetMode === "manual"
+  const parsedMultiplier = Number(form.targetMultiplier || 0)
+  const parsedManualTarget = Number(form.manualTargetAmount || 0)
+  const isValid = isManual ? parsedManualTarget > 0 : parsedMultiplier > 0
+  const title =
+    fund?.fundType === "emergency_reserve"
+      ? "Подушка безопасности"
+      : "Бюджетный фонд"
   const helperText =
     fund?.fundType === "emergency_reserve"
       ? "Определи, сколько месяцев регулярных трат должна покрывать подушка безопасности."
-      : "Определи, сколько месяцев регулярных трат должно быть в бюджетном фонде.";
+      : "Определи, сколько месяцев регулярных трат должно быть в бюджетном фонде."
 
   return (
     <ModalShell title={title} onClose={onClose} compact>
@@ -6041,44 +7087,74 @@ function CashflowReserveTargetModal({ fund, onClose, onSave }) {
       </div>
       <div className="modal-form">
         <label className="field">
-          <span className="field-head"><span>Как считать цель</span></span>
+          <span className="field-head">
+            <span>Как считать цель</span>
+          </span>
           <select
             value={form.targetMode}
-            onChange={(event) => setForm((current) => ({ ...current, targetMode: event.target.value }))}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                targetMode: event.target.value,
+              }))
+            }
           >
             {cashflowTargetModeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
         </label>
         <div className="cashflow-settings-note">
-          Основа расчёта: ежемесячные регулярные траты берутся целиком, ежегодные делятся на 12.
+          Основа расчёта: ежемесячные регулярные траты берутся целиком,
+          ежегодные делятся на 12.
         </div>
         {isManual ? (
           <label className="field">
-            <span className="field-head"><span>Цель в Kč</span></span>
+            <span className="field-head">
+              <span>Цель в Kč</span>
+            </span>
             <input
               value={formatNumberInput(form.manualTargetAmount)}
-              placeholder={fund?.fundType === "emergency_reserve" ? "240000" : "160000"}
+              placeholder={
+                fund?.fundType === "emergency_reserve" ? "240000" : "160000"
+              }
               onChange={(event) =>
-                setForm((current) => ({ ...current, manualTargetAmount: parseDigits(event.target.value) }))
+                setForm((current) => ({
+                  ...current,
+                  manualTargetAmount: parseDigits(event.target.value),
+                }))
               }
             />
           </label>
         ) : (
           <label className="field">
-            <span className="field-head"><span>Сколько месяцев регулярных трат держать</span></span>
+            <span className="field-head">
+              <span>Сколько месяцев регулярных трат держать</span>
+            </span>
             <input
               value={form.targetMultiplier}
               placeholder={fund?.fundType === "emergency_reserve" ? "3" : "2"}
-              onChange={(event) => setForm((current) => ({ ...current, targetMultiplier: parseDigits(event.target.value) }))}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  targetMultiplier: parseDigits(event.target.value),
+                }))
+              }
             />
           </label>
         )}
       </div>
       <div className="editor-footer">
         <div className="editor-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>Отмена</button>
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onClose}
+          >
+            Отмена
+          </button>
           <button
             className="primary-action-button"
             type="button"
@@ -6097,10 +7173,16 @@ function CashflowReserveTargetModal({ fund, onClose, onSave }) {
         </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
-function CashflowDetailRow({ label, value, hint = "", danger = false, onClick = null }) {
+function CashflowDetailRow({
+  label,
+  value,
+  hint = "",
+  danger = false,
+  onClick = null,
+}) {
   return (
     <div
       className={[
@@ -6115,8 +7197,8 @@ function CashflowDetailRow({ label, value, hint = "", danger = false, onClick = 
         onClick
           ? (event) => {
               if (event.key === "Enter" || event.key === " ") {
-                event.preventDefault();
-                onClick();
+                event.preventDefault()
+                onClick()
               }
             }
           : undefined
@@ -6130,7 +7212,7 @@ function CashflowDetailRow({ label, value, hint = "", danger = false, onClick = 
       </div>
       <div className="cashflow-detail-value">{value}</div>
     </div>
-  );
+  )
 }
 
 function CashflowSnapshotRow({ snapshot, onClick }) {
@@ -6140,8 +7222,8 @@ function CashflowSnapshotRow({ snapshot, onClick }) {
       onClick={onClick}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onClick();
+          event.preventDefault()
+          onClick()
         }
       }}
       role="button"
@@ -6156,11 +7238,11 @@ function CashflowSnapshotRow({ snapshot, onClick }) {
         <span>{formatSqlDateHuman(snapshot.snapshotDate)}</span>
       </div>
     </div>
-  );
+  )
 }
 
 function CashflowIncomeEditorModal({ incomeEvent, onClose, onSave }) {
-  const isCreateMode = !incomeEvent;
+  const isCreateMode = !incomeEvent
   const [form, setForm] = useState(() => ({
     incomeDate: incomeEvent?.incomeDate ?? getTodaySqlDate(),
     owner: incomeEvent?.owner ?? "shared",
@@ -6174,16 +7256,19 @@ function CashflowIncomeEditorModal({ incomeEvent, onClose, onSave }) {
         ? String(incomeEvent.exchangeRateToCzk)
         : "",
     note: incomeEvent?.note ?? "",
-  }));
+  }))
 
-  const isReceived = form.status === "received";
-  const rawAmount = Number(isReceived ? form.actualAmount || 0 : form.expectedAmount || 0);
-  const rate = form.currency === "CZK" ? 1 : Number(form.exchangeRateToCzk || 0);
-  const isValid = form.incomeDate && rawAmount > 0 && (form.currency === "CZK" || rate > 0);
+  const isReceived = form.status === "received"
+  const rawAmount = Number(
+    isReceived ? form.actualAmount || 0 : form.expectedAmount || 0
+  )
+  const rate = form.currency === "CZK" ? 1 : Number(form.exchangeRateToCzk || 0)
+  const isValid =
+    form.incomeDate && rawAmount > 0 && (form.currency === "CZK" || rate > 0)
 
   const handleSave = () => {
     if (!isValid) {
-      return;
+      return
     }
 
     onSave({
@@ -6198,84 +7283,194 @@ function CashflowIncomeEditorModal({ incomeEvent, onClose, onSave }) {
       exchangeRateToCzk: form.currency === "CZK" ? 1 : rate,
       amountCzk: Math.round(rawAmount * (form.currency === "CZK" ? 1 : rate)),
       note: form.note.trim(),
-    });
-  };
+    })
+  }
 
   return (
-    <ModalShell title={isCreateMode ? "Добавить доход" : "Изменить доход"} onClose={onClose} compact>
+    <ModalShell
+      title={isCreateMode ? "Добавить доход" : "Изменить доход"}
+      onClose={onClose}
+      compact
+    >
       <div className="modal-header">
         <h2>{isCreateMode ? "Добавить доход" : "Изменить доход"}</h2>
       </div>
       <div className="modal-form">
         <label className="field">
-          <span className="field-head"><span>Дата *</span></span>
-          <input type="date" value={form.incomeDate} onChange={(event) => setForm((current) => ({ ...current, incomeDate: event.target.value }))} />
+          <span className="field-head">
+            <span>Дата *</span>
+          </span>
+          <input
+            type="date"
+            value={form.incomeDate}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                incomeDate: event.target.value,
+              }))
+            }
+          />
         </label>
         <label className="field">
-          <span className="field-head"><span>Чей доход *</span></span>
-          <select value={form.owner} onChange={(event) => setForm((current) => ({ ...current, owner: event.target.value }))}>
+          <span className="field-head">
+            <span>Чей доход *</span>
+          </span>
+          <select
+            value={form.owner}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, owner: event.target.value }))
+            }
+          >
             {cashflowIncomeOwnerOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
         </label>
         <label className="field">
-          <span className="field-head"><span>Тип дохода *</span></span>
-          <select value={form.incomeType} onChange={(event) => setForm((current) => ({ ...current, incomeType: event.target.value }))}>
+          <span className="field-head">
+            <span>Тип дохода *</span>
+          </span>
+          <select
+            value={form.incomeType}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                incomeType: event.target.value,
+              }))
+            }
+          >
             {cashflowIncomeTypeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
         </label>
         <label className="field">
-          <span className="field-head"><span>Статус *</span></span>
-          <select value={form.status} onChange={(event) => setForm((current) => ({ ...current, status: event.target.value }))}>
+          <span className="field-head">
+            <span>Статус *</span>
+          </span>
+          <select
+            value={form.status}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, status: event.target.value }))
+            }
+          >
             {cashflowIncomeStatusOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
         </label>
         <label className="field">
-          <span className="field-head"><span>Ожидаемая сумма</span></span>
+          <span className="field-head">
+            <span>Ожидаемая сумма</span>
+          </span>
           <div className="input-with-suffix">
-            <input value={formatNumberInput(form.expectedAmount)} onChange={(event) => setForm((current) => ({ ...current, expectedAmount: parseDigits(event.target.value) }))} />
+            <input
+              value={formatNumberInput(form.expectedAmount)}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  expectedAmount: parseDigits(event.target.value),
+                }))
+              }
+            />
             <span>{form.currency}</span>
           </div>
         </label>
         <label className="field">
-          <span className="field-head"><span>Фактическая сумма</span></span>
+          <span className="field-head">
+            <span>Фактическая сумма</span>
+          </span>
           <div className="input-with-suffix">
-            <input value={formatNumberInput(form.actualAmount)} onChange={(event) => setForm((current) => ({ ...current, actualAmount: parseDigits(event.target.value) }))} />
+            <input
+              value={formatNumberInput(form.actualAmount)}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  actualAmount: parseDigits(event.target.value),
+                }))
+              }
+            />
             <span>{form.currency}</span>
           </div>
         </label>
         <label className="field">
-          <span className="field-head"><span>Валюта *</span></span>
-          <select value={form.currency} onChange={(event) => setForm((current) => ({ ...current, currency: event.target.value }))}>
+          <span className="field-head">
+            <span>Валюта *</span>
+          </span>
+          <select
+            value={form.currency}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                currency: event.target.value,
+              }))
+            }
+          >
             {cashflowCurrencyOptions.map((currency) => (
-              <option key={currency} value={currency}>{currency}</option>
+              <option key={currency} value={currency}>
+                {currency}
+              </option>
             ))}
           </select>
         </label>
         {form.currency !== "CZK" ? (
           <label className="field">
-            <span className="field-head"><span>Курс к CZK *</span></span>
-            <input value={form.exchangeRateToCzk} onChange={(event) => setForm((current) => ({ ...current, exchangeRateToCzk: event.target.value.replace(/[^0-9.,]/g, "").replace(",", ".") }))} />
+            <span className="field-head">
+              <span>Курс к CZK *</span>
+            </span>
+            <input
+              value={form.exchangeRateToCzk}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  exchangeRateToCzk: event.target.value
+                    .replace(/[^0-9.,]/g, "")
+                    .replace(",", "."),
+                }))
+              }
+            />
           </label>
         ) : null}
         <label className="field">
-          <span className="field-head"><span>Комментарий</span></span>
-          <textarea rows={3} value={form.note} onChange={(event) => setForm((current) => ({ ...current, note: event.target.value }))} />
+          <span className="field-head">
+            <span>Комментарий</span>
+          </span>
+          <textarea
+            rows={3}
+            value={form.note}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, note: event.target.value }))
+            }
+          />
         </label>
       </div>
       <div className="editor-footer">
         <div className="editor-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>Отмена</button>
-          <button className="primary-action-button" type="button" disabled={!isValid} onClick={handleSave}>Сохранить</button>
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onClose}
+          >
+            Отмена
+          </button>
+          <button
+            className="primary-action-button"
+            type="button"
+            disabled={!isValid}
+            onClick={handleSave}
+          >
+            Сохранить
+          </button>
         </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
 function CashflowMonthlyIncomeModal({ monthRow, onClose, onSave }) {
@@ -6284,7 +7479,7 @@ function CashflowMonthlyIncomeModal({ monthRow, onClose, onSave }) {
     expectedSasha: String(monthRow.expectedSasha || ""),
     actualRoma: String(monthRow.receivedRoma || ""),
     actualSasha: String(monthRow.receivedSasha || ""),
-  }));
+  }))
 
   const handleSave = () => {
     onSave({
@@ -6293,57 +7488,89 @@ function CashflowMonthlyIncomeModal({ monthRow, onClose, onSave }) {
       expectedSasha: Number(form.expectedSasha || 0),
       actualRoma: Number(form.actualRoma || 0),
       actualSasha: Number(form.actualSasha || 0),
-    });
-  };
+    })
+  }
 
   return (
-    <ModalShell title={`Доходы · ${monthRow.monthName} ${monthRow.year}`} onClose={onClose} compact>
+    <ModalShell
+      title={`Доходы · ${monthRow.monthName} ${monthRow.year}`}
+      onClose={onClose}
+      compact
+    >
       <div className="modal-header">
         <h2>{`${monthRow.monthName} ${monthRow.year}`}</h2>
       </div>
       <div className="modal-form">
         <div className="cashflow-income-month-grid">
           <label className="field">
-            <span className="field-head"><span>Ожидаемый доход Ромы</span></span>
+            <span className="field-head">
+              <span>Ожидаемый доход Ромы</span>
+            </span>
             <div className="input-with-suffix">
               <input
                 value={formatNumberInput(form.expectedRoma)}
                 disabled={Number(form.actualRoma || 0) > 0}
-                onChange={(event) => setForm((current) => ({ ...current, expectedRoma: parseDigits(event.target.value) }))}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    expectedRoma: parseDigits(event.target.value),
+                  }))
+                }
               />
               <span>CZK</span>
             </div>
           </label>
 
           <label className="field">
-            <span className="field-head"><span>Фактический доход Ромы</span></span>
+            <span className="field-head">
+              <span>Фактический доход Ромы</span>
+            </span>
             <div className="input-with-suffix">
               <input
                 value={formatNumberInput(form.actualRoma)}
-                onChange={(event) => setForm((current) => ({ ...current, actualRoma: parseDigits(event.target.value) }))}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    actualRoma: parseDigits(event.target.value),
+                  }))
+                }
               />
               <span>CZK</span>
             </div>
           </label>
 
           <label className="field">
-            <span className="field-head"><span>Ожидаемый доход Саши</span></span>
+            <span className="field-head">
+              <span>Ожидаемый доход Саши</span>
+            </span>
             <div className="input-with-suffix">
               <input
                 value={formatNumberInput(form.expectedSasha)}
                 disabled={Number(form.actualSasha || 0) > 0}
-                onChange={(event) => setForm((current) => ({ ...current, expectedSasha: parseDigits(event.target.value) }))}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    expectedSasha: parseDigits(event.target.value),
+                  }))
+                }
               />
               <span>CZK</span>
             </div>
           </label>
 
           <label className="field">
-            <span className="field-head"><span>Фактический доход Саши</span></span>
+            <span className="field-head">
+              <span>Фактический доход Саши</span>
+            </span>
             <div className="input-with-suffix">
               <input
                 value={formatNumberInput(form.actualSasha)}
-                onChange={(event) => setForm((current) => ({ ...current, actualSasha: parseDigits(event.target.value) }))}
+                onChange={(event) =>
+                  setForm((current) => ({
+                    ...current,
+                    actualSasha: parseDigits(event.target.value),
+                  }))
+                }
               />
               <span>CZK</span>
             </div>
@@ -6351,25 +7578,47 @@ function CashflowMonthlyIncomeModal({ monthRow, onClose, onSave }) {
         </div>
 
         <p className="regular-editor-note">
-          Если справа внесён фактический доход, ожидаемое значение для этого человека перестаёт учитываться в аналитике месяца.
+          Если справа внесён фактический доход, ожидаемое значение для этого
+          человека перестаёт учитываться в аналитике месяца.
         </p>
       </div>
 
       <div className="editor-footer">
         <div className="editor-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>Отмена</button>
-          <button className="primary-action-button" type="button" onClick={handleSave}>Сохранить</button>
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onClose}
+          >
+            Отмена
+          </button>
+          <button
+            className="primary-action-button"
+            type="button"
+            onClick={handleSave}
+          >
+            Сохранить
+          </button>
         </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
-function CashflowSnapshotEditorModal({ snapshot, accounts, funds, onClose, onSave }) {
-  const isCreateMode = !snapshot;
+function CashflowSnapshotEditorModal({
+  snapshot,
+  accounts,
+  funds,
+  onClose,
+  onSave,
+}) {
+  const isCreateMode = !snapshot
   const [form, setForm] = useState(() => ({
     accountId: snapshot?.accountId ?? "",
-    fundId: snapshot?.fundId ?? funds.find((item) => item.fundType === "budget_reserve")?.id ?? "",
+    fundId:
+      snapshot?.fundId ??
+      funds.find((item) => item.fundType === "budget_reserve")?.id ??
+      "",
     snapshotDate: snapshot?.snapshotDate ?? getTodaySqlDate(),
     amount: snapshot ? String(snapshot.amount) : "",
     currency: snapshot?.currency ?? DEFAULT_CASHFLOW_CURRENCY,
@@ -6379,19 +7628,19 @@ function CashflowSnapshotEditorModal({ snapshot, accounts, funds, onClose, onSav
         : "",
     assetType: snapshot?.assetType ?? "bank_account",
     owner: snapshot?.owner ?? "shared",
-  }));
-  const rate = form.currency === "CZK" ? 1 : Number(form.exchangeRateToCzk || 0);
-  const amount = Number(form.amount || 0);
+  }))
+  const rate = form.currency === "CZK" ? 1 : Number(form.exchangeRateToCzk || 0)
+  const amount = Number(form.amount || 0)
   const isValid =
     form.accountId &&
     form.snapshotDate &&
     amount > 0 &&
     form.fundId &&
-    (form.currency === "CZK" || rate > 0);
+    (form.currency === "CZK" || rate > 0)
 
   const handleSave = () => {
     if (!isValid) {
-      return;
+      return
     }
 
     onSave(
@@ -6407,18 +7656,26 @@ function CashflowSnapshotEditorModal({ snapshot, accounts, funds, onClose, onSav
         assetType: form.assetType,
         owner: form.owner,
       },
-      null,
-    );
-  };
+      null
+    )
+  }
 
   return (
-    <ModalShell title={isCreateMode ? "Снимок баланса" : "Изменить снимок баланса"} onClose={onClose} compact>
+    <ModalShell
+      title={isCreateMode ? "Снимок баланса" : "Изменить снимок баланса"}
+      onClose={onClose}
+      compact
+    >
       <div className="modal-header">
-        <h2>{isCreateMode ? "Добавить или обновить баланс" : "Изменить снимок"}</h2>
+        <h2>
+          {isCreateMode ? "Добавить или обновить баланс" : "Изменить снимок"}
+        </h2>
       </div>
       <div className="modal-form">
         <label className="field">
-          <span className="field-head"><span>Счёт / место хранения *</span></span>
+          <span className="field-head">
+            <span>Счёт / место хранения *</span>
+          </span>
           <select
             value={form.accountId}
             onChange={(event) =>
@@ -6430,7 +7687,9 @@ function CashflowSnapshotEditorModal({ snapshot, accounts, funds, onClose, onSav
           >
             <option value="">Выбери счёт</option>
             {accounts.map((account) => (
-              <option key={account.id} value={account.id}>{account.name}</option>
+              <option key={account.id} value={account.id}>
+                {account.name}
+              </option>
             ))}
           </select>
         </label>
@@ -6438,89 +7697,200 @@ function CashflowSnapshotEditorModal({ snapshot, accounts, funds, onClose, onSav
           Счета и фонды теперь редактируются отдельно в разделе «Настройки».
         </p>
         <label className="field">
-          <span className="field-head"><span>Фонд *</span></span>
-          <select value={form.fundId} onChange={(event) => setForm((current) => ({ ...current, fundId: event.target.value }))}>
-            {funds.filter((fund) => fund.isActive).map((fund) => (
-              <option key={fund.id} value={fund.id}>{fund.name}</option>
-            ))}
+          <span className="field-head">
+            <span>Фонд *</span>
+          </span>
+          <select
+            value={form.fundId}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, fundId: event.target.value }))
+            }
+          >
+            {funds
+              .filter((fund) => fund.isActive)
+              .map((fund) => (
+                <option key={fund.id} value={fund.id}>
+                  {fund.name}
+                </option>
+              ))}
           </select>
         </label>
         <label className="field">
-          <span className="field-head"><span>Дата снимка *</span></span>
-          <input type="date" value={form.snapshotDate} onChange={(event) => setForm((current) => ({ ...current, snapshotDate: event.target.value }))} />
+          <span className="field-head">
+            <span>Дата снимка *</span>
+          </span>
+          <input
+            type="date"
+            value={form.snapshotDate}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                snapshotDate: event.target.value,
+              }))
+            }
+          />
         </label>
         <label className="field">
-          <span className="field-head"><span>Сумма *</span></span>
+          <span className="field-head">
+            <span>Сумма *</span>
+          </span>
           <div className="input-with-suffix">
-            <input value={formatNumberInput(form.amount)} onChange={(event) => setForm((current) => ({ ...current, amount: parseDigits(event.target.value) }))} />
+            <input
+              value={formatNumberInput(form.amount)}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  amount: parseDigits(event.target.value),
+                }))
+              }
+            />
             <span>{form.currency}</span>
           </div>
         </label>
         <label className="field">
-          <span className="field-head"><span>Валюта *</span></span>
-          <select value={form.currency} onChange={(event) => setForm((current) => ({ ...current, currency: event.target.value }))}>
+          <span className="field-head">
+            <span>Валюта *</span>
+          </span>
+          <select
+            value={form.currency}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                currency: event.target.value,
+              }))
+            }
+          >
             {cashflowCurrencyOptions.map((currency) => (
-              <option key={currency} value={currency}>{currency}</option>
+              <option key={currency} value={currency}>
+                {currency}
+              </option>
             ))}
           </select>
         </label>
         {form.currency !== "CZK" ? (
           <label className="field">
-            <span className="field-head"><span>Курс к CZK *</span></span>
-            <input value={form.exchangeRateToCzk} onChange={(event) => setForm((current) => ({ ...current, exchangeRateToCzk: event.target.value.replace(/[^0-9.,]/g, "").replace(",", ".") }))} />
+            <span className="field-head">
+              <span>Курс к CZK *</span>
+            </span>
+            <input
+              value={form.exchangeRateToCzk}
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  exchangeRateToCzk: event.target.value
+                    .replace(/[^0-9.,]/g, "")
+                    .replace(",", "."),
+                }))
+              }
+            />
           </label>
         ) : null}
         <label className="field">
-          <span className="field-head"><span>Тип актива</span></span>
-          <select value={form.assetType} onChange={(event) => setForm((current) => ({ ...current, assetType: event.target.value }))}>
+          <span className="field-head">
+            <span>Тип актива</span>
+          </span>
+          <select
+            value={form.assetType}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                assetType: event.target.value,
+              }))
+            }
+          >
             {cashflowAssetTypeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
         </label>
       </div>
       <div className="editor-footer">
         <div className="editor-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>Отмена</button>
-          <button className="primary-action-button" type="button" disabled={!isValid} onClick={handleSave}>Сохранить</button>
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onClose}
+          >
+            Отмена
+          </button>
+          <button
+            className="primary-action-button"
+            type="button"
+            disabled={!isValid}
+            onClick={handleSave}
+          >
+            Сохранить
+          </button>
         </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
 function CashflowReserveEditorModal({ settings, funds, onClose, onSave }) {
-  const budgetFund = funds.find((fund) => fund.fundType === "budget_reserve");
-  const emergencyFund = funds.find((fund) => fund.fundType === "emergency_reserve");
+  const budgetFund = funds.find((fund) => fund.fundType === "budget_reserve")
+  const emergencyFund = funds.find(
+    (fund) => fund.fundType === "emergency_reserve"
+  )
   const [form, setForm] = useState(() => ({
     baseCurrency: settings.baseCurrency,
     mandatoryBudgetAverageMonths: String(settings.mandatoryBudgetAverageMonths),
-    budgetReserveTargetMode: budgetFund?.targetMode ?? "auto_average_mandatory_budget",
-    budgetReserveMonthsMultiplier: String(budgetFund?.targetMultiplier ?? settings.budgetReserveMonthsMultiplier),
-    budgetReserveManualTarget: budgetFund?.manualTargetAmount ? String(budgetFund.manualTargetAmount) : "",
-    emergencyReserveTargetMode: emergencyFund?.targetMode ?? "auto_average_mandatory_budget",
-    emergencyReserveMonthsMultiplier: String(emergencyFund?.targetMultiplier ?? settings.emergencyReserveMonthsMultiplier),
-    emergencyReserveManualTarget: emergencyFund?.manualTargetAmount ? String(emergencyFund.manualTargetAmount) : "",
+    budgetReserveTargetMode:
+      budgetFund?.targetMode ?? "auto_average_mandatory_budget",
+    budgetReserveMonthsMultiplier: String(
+      budgetFund?.targetMultiplier ?? settings.budgetReserveMonthsMultiplier
+    ),
+    budgetReserveManualTarget: budgetFund?.manualTargetAmount
+      ? String(budgetFund.manualTargetAmount)
+      : "",
+    emergencyReserveTargetMode:
+      emergencyFund?.targetMode ?? "auto_average_mandatory_budget",
+    emergencyReserveMonthsMultiplier: String(
+      emergencyFund?.targetMultiplier ??
+        settings.emergencyReserveMonthsMultiplier
+    ),
+    emergencyReserveManualTarget: emergencyFund?.manualTargetAmount
+      ? String(emergencyFund.manualTargetAmount)
+      : "",
     receivedIncomeLabel: settings.receivedIncomeLabel,
     budgetReservePriorityLabel: settings.budgetReservePriorityLabel,
     emergencyReservePriorityLabel: settings.emergencyReservePriorityLabel,
     investmentsPriorityLabel: settings.investmentsPriorityLabel,
-  }));
+  }))
 
   const handleSave = () => {
     const nextSettings = normalizeCashflowSettings({
       ...settings,
       baseCurrency: form.baseCurrency,
-      mandatoryBudgetAverageMonths: Number(form.mandatoryBudgetAverageMonths || 6),
-      budgetReserveMonthsMultiplier: Number(form.budgetReserveMonthsMultiplier || 2),
-      emergencyReserveMonthsMultiplier: Number(form.emergencyReserveMonthsMultiplier || 3),
-      budgetReserveManualTarget: form.budgetReserveManualTarget ? Number(form.budgetReserveManualTarget) : null,
-      emergencyReserveManualTarget: form.emergencyReserveManualTarget ? Number(form.emergencyReserveManualTarget) : null,
-      receivedIncomeLabel: form.receivedIncomeLabel.trim() || "Получено доходов",
-      budgetReservePriorityLabel: form.budgetReservePriorityLabel.trim() || "Перевести в бюджетную кубышку",
-      emergencyReservePriorityLabel: form.emergencyReservePriorityLabel.trim() || "Пополнить сейф безопасности",
-      investmentsPriorityLabel: form.investmentsPriorityLabel.trim() || "Можно направить в инвестиции и цели",
-    });
+      mandatoryBudgetAverageMonths: Number(
+        form.mandatoryBudgetAverageMonths || 6
+      ),
+      budgetReserveMonthsMultiplier: Number(
+        form.budgetReserveMonthsMultiplier || 2
+      ),
+      emergencyReserveMonthsMultiplier: Number(
+        form.emergencyReserveMonthsMultiplier || 3
+      ),
+      budgetReserveManualTarget: form.budgetReserveManualTarget
+        ? Number(form.budgetReserveManualTarget)
+        : null,
+      emergencyReserveManualTarget: form.emergencyReserveManualTarget
+        ? Number(form.emergencyReserveManualTarget)
+        : null,
+      receivedIncomeLabel:
+        form.receivedIncomeLabel.trim() || "Получено доходов",
+      budgetReservePriorityLabel:
+        form.budgetReservePriorityLabel.trim() ||
+        "Перевести в бюджетную кубышку",
+      emergencyReservePriorityLabel:
+        form.emergencyReservePriorityLabel.trim() ||
+        "Пополнить сейф безопасности",
+      investmentsPriorityLabel:
+        form.investmentsPriorityLabel.trim() ||
+        "Можно направить в инвестиции и цели",
+    })
 
     const nextFunds = funds.map((fund) => {
       if (fund.fundType === "budget_reserve") {
@@ -6528,9 +7898,11 @@ function CashflowReserveEditorModal({ settings, funds, onClose, onSave }) {
           ...fund,
           targetMode: form.budgetReserveTargetMode,
           targetMultiplier: Number(form.budgetReserveMonthsMultiplier || 2),
-          manualTargetAmount: form.budgetReserveManualTarget ? Number(form.budgetReserveManualTarget) : null,
+          manualTargetAmount: form.budgetReserveManualTarget
+            ? Number(form.budgetReserveManualTarget)
+            : null,
           currency: form.baseCurrency,
-        };
+        }
       }
 
       if (fund.fundType === "emergency_reserve") {
@@ -6538,16 +7910,18 @@ function CashflowReserveEditorModal({ settings, funds, onClose, onSave }) {
           ...fund,
           targetMode: form.emergencyReserveTargetMode,
           targetMultiplier: Number(form.emergencyReserveMonthsMultiplier || 3),
-          manualTargetAmount: form.emergencyReserveManualTarget ? Number(form.emergencyReserveManualTarget) : null,
+          manualTargetAmount: form.emergencyReserveManualTarget
+            ? Number(form.emergencyReserveManualTarget)
+            : null,
           currency: form.baseCurrency,
-        };
+        }
       }
 
-      return fund;
-    });
+      return fund
+    })
 
-    onSave(nextSettings, nextFunds);
-  };
+    onSave(nextSettings, nextFunds)
+  }
 
   return (
     <ModalShell title="Настройка резервов" onClose={onClose} compact>
@@ -6556,85 +7930,225 @@ function CashflowReserveEditorModal({ settings, funds, onClose, onSave }) {
       </div>
       <div className="modal-form">
         <label className="field">
-          <span className="field-head"><span>Базовая валюта</span></span>
-          <select value={form.baseCurrency} onChange={(event) => setForm((current) => ({ ...current, baseCurrency: event.target.value }))}>
+          <span className="field-head">
+            <span>Базовая валюта</span>
+          </span>
+          <select
+            value={form.baseCurrency}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                baseCurrency: event.target.value,
+              }))
+            }
+          >
             {cashflowCurrencyOptions.map((currency) => (
-              <option key={currency} value={currency}>{currency}</option>
+              <option key={currency} value={currency}>
+                {currency}
+              </option>
             ))}
           </select>
         </label>
         <div className="cashflow-settings-note">
-          Цель резервов считается от регулярных трат: ежемесячные берутся целиком, а ежегодные делятся на 12.
+          Цель резервов считается от регулярных трат: ежемесячные берутся
+          целиком, а ежегодные делятся на 12.
         </div>
         <div className="field">
-          <span className="field-head"><span>Бюджетная кубышка</span></span>
-          <select value={form.budgetReserveTargetMode} onChange={(event) => setForm((current) => ({ ...current, budgetReserveTargetMode: event.target.value }))}>
+          <span className="field-head">
+            <span>Бюджетная кубышка</span>
+          </span>
+          <select
+            value={form.budgetReserveTargetMode}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                budgetReserveTargetMode: event.target.value,
+              }))
+            }
+          >
             {cashflowTargetModeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
           {form.budgetReserveTargetMode === "manual" ? (
-            <input value={formatNumberInput(form.budgetReserveManualTarget)} placeholder="160000" onChange={(event) => setForm((current) => ({ ...current, budgetReserveManualTarget: parseDigits(event.target.value) }))} />
+            <input
+              value={formatNumberInput(form.budgetReserveManualTarget)}
+              placeholder="160000"
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  budgetReserveManualTarget: parseDigits(event.target.value),
+                }))
+              }
+            />
           ) : (
-            <input value={form.budgetReserveMonthsMultiplier} placeholder="2" onChange={(event) => setForm((current) => ({ ...current, budgetReserveMonthsMultiplier: parseDigits(event.target.value) }))} />
+            <input
+              value={form.budgetReserveMonthsMultiplier}
+              placeholder="2"
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  budgetReserveMonthsMultiplier: parseDigits(
+                    event.target.value
+                  ),
+                }))
+              }
+            />
           )}
         </div>
         <div className="field">
-          <span className="field-head"><span>Сейф безопасности</span></span>
-          <select value={form.emergencyReserveTargetMode} onChange={(event) => setForm((current) => ({ ...current, emergencyReserveTargetMode: event.target.value }))}>
+          <span className="field-head">
+            <span>Сейф безопасности</span>
+          </span>
+          <select
+            value={form.emergencyReserveTargetMode}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                emergencyReserveTargetMode: event.target.value,
+              }))
+            }
+          >
             {cashflowTargetModeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
           {form.emergencyReserveTargetMode === "manual" ? (
-            <input value={formatNumberInput(form.emergencyReserveManualTarget)} placeholder="240000" onChange={(event) => setForm((current) => ({ ...current, emergencyReserveManualTarget: parseDigits(event.target.value) }))} />
+            <input
+              value={formatNumberInput(form.emergencyReserveManualTarget)}
+              placeholder="240000"
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  emergencyReserveManualTarget: parseDigits(event.target.value),
+                }))
+              }
+            />
           ) : (
-            <input value={form.emergencyReserveMonthsMultiplier} placeholder="3" onChange={(event) => setForm((current) => ({ ...current, emergencyReserveMonthsMultiplier: parseDigits(event.target.value) }))} />
+            <input
+              value={form.emergencyReserveMonthsMultiplier}
+              placeholder="3"
+              onChange={(event) =>
+                setForm((current) => ({
+                  ...current,
+                  emergencyReserveMonthsMultiplier: parseDigits(
+                    event.target.value
+                  ),
+                }))
+              }
+            />
           )}
         </div>
         <label className="field">
-          <span className="field-head"><span>Подпись: получено доходов</span></span>
-          <input value={form.receivedIncomeLabel} onChange={(event) => setForm((current) => ({ ...current, receivedIncomeLabel: event.target.value }))} />
+          <span className="field-head">
+            <span>Подпись: получено доходов</span>
+          </span>
+          <input
+            value={form.receivedIncomeLabel}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                receivedIncomeLabel: event.target.value,
+              }))
+            }
+          />
         </label>
         <label className="field">
-          <span className="field-head"><span>Подпись: приоритет 1</span></span>
-          <input value={form.budgetReservePriorityLabel} onChange={(event) => setForm((current) => ({ ...current, budgetReservePriorityLabel: event.target.value }))} />
+          <span className="field-head">
+            <span>Подпись: приоритет 1</span>
+          </span>
+          <input
+            value={form.budgetReservePriorityLabel}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                budgetReservePriorityLabel: event.target.value,
+              }))
+            }
+          />
         </label>
         <label className="field">
-          <span className="field-head"><span>Подпись: приоритет 2</span></span>
-          <input value={form.emergencyReservePriorityLabel} onChange={(event) => setForm((current) => ({ ...current, emergencyReservePriorityLabel: event.target.value }))} />
+          <span className="field-head">
+            <span>Подпись: приоритет 2</span>
+          </span>
+          <input
+            value={form.emergencyReservePriorityLabel}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                emergencyReservePriorityLabel: event.target.value,
+              }))
+            }
+          />
         </label>
         <label className="field">
-          <span className="field-head"><span>Подпись: приоритет 3</span></span>
-          <input value={form.investmentsPriorityLabel} onChange={(event) => setForm((current) => ({ ...current, investmentsPriorityLabel: event.target.value }))} />
+          <span className="field-head">
+            <span>Подпись: приоритет 3</span>
+          </span>
+          <input
+            value={form.investmentsPriorityLabel}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                investmentsPriorityLabel: event.target.value,
+              }))
+            }
+          />
         </label>
       </div>
       <div className="editor-footer">
         <div className="editor-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>Отмена</button>
-          <button className="primary-action-button" type="button" onClick={handleSave}>Сохранить</button>
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onClose}
+          >
+            Отмена
+          </button>
+          <button
+            className="primary-action-button"
+            type="button"
+            onClick={handleSave}
+          >
+            Сохранить
+          </button>
         </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
-function CashflowSnapshotDetailsModal({ snapshot, accounts, funds, onClose, onEdit, onDelete }) {
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const account = accounts.find((item) => item.id === snapshot.accountId);
-  const fund = funds.find((item) => item.id === snapshot.fundId);
-  const accountName = account?.name ?? "Счёт";
-  const fundName = fund?.name ?? getCashflowSystemFundLabel(fund?.fundType);
+function CashflowSnapshotDetailsModal({
+  snapshot,
+  accounts,
+  funds,
+  onClose,
+  onEdit,
+  onDelete,
+}) {
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const account = accounts.find((item) => item.id === snapshot.accountId)
+  const fund = funds.find((item) => item.id === snapshot.fundId)
+  const accountName = account?.name ?? "Счёт"
+  const fundName = fund?.name ?? getCashflowSystemFundLabel(fund?.fundType)
   const assetTypeLabel =
-    cashflowAssetTypeOptions.find((option) => option.value === snapshot.assetType)?.label ?? snapshot.assetType;
-  const ownerLabel = getCashflowOwnerLabel(snapshot.owner);
+    cashflowAssetTypeOptions.find(
+      (option) => option.value === snapshot.assetType
+    )?.label ?? snapshot.assetType
+  const ownerLabel = getCashflowOwnerLabel(snapshot.owner)
 
   return (
     <ModalShell title="Детали снимка баланса" onClose={onClose} compact>
       <div className="modal-header">
         <div>
           <h2>{`${accountName} · ${fundName}`}</h2>
-          <div className="details-amount inline">{formatCurrency(snapshot.amountCzk)} Kč</div>
+          <div className="details-amount inline">
+            {formatCurrency(snapshot.amountCzk)} Kč
+          </div>
         </div>
       </div>
 
@@ -6642,29 +8156,54 @@ function CashflowSnapshotDetailsModal({ snapshot, accounts, funds, onClose, onEd
         <div className="details-grid">
           <DetailRow label="Счёт / место хранения" value={accountName} />
           <DetailRow label="Фонд" value={fundName} />
-          <DetailRow label="Дата обновления" value={formatSqlDateHuman(snapshot.snapshotDate)} />
+          <DetailRow
+            label="Дата обновления"
+            value={formatSqlDateHuman(snapshot.snapshotDate)}
+          />
           <DetailRow label="Тип актива" value={assetTypeLabel} />
           <DetailRow label="Владелец" value={ownerLabel} />
-          <DetailRow label="Сумма в валюте" value={`${formatCurrency(snapshot.amount)} ${snapshot.currency}`} />
+          <DetailRow
+            label="Сумма в валюте"
+            value={`${formatCurrency(snapshot.amount)} ${snapshot.currency}`}
+          />
           <DetailRow
             label="Курс к CZK"
-            value={snapshot.currency === "CZK" ? "1" : String(snapshot.exchangeRateToCzk)}
+            value={
+              snapshot.currency === "CZK"
+                ? "1"
+                : String(snapshot.exchangeRateToCzk)
+            }
           />
-          <DetailRow label="Сумма в CZK" value={`${formatCurrency(snapshot.amountCzk)} Kč`} />
+          <DetailRow
+            label="Сумма в CZK"
+            value={`${formatCurrency(snapshot.amountCzk)} Kč`}
+          />
         </div>
 
         <div className="details-actions">
-          <button className="secondary-action-button danger" type="button" onClick={() => setConfirmDelete(true)}>
+          <button
+            className="secondary-action-button danger"
+            type="button"
+            onClick={() => setConfirmDelete(true)}
+          >
             Удалить
           </button>
-          <button className="primary-action-button" type="button" onClick={onEdit}>
+          <button
+            className="primary-action-button"
+            type="button"
+            onClick={onEdit}
+          >
             Изменить
           </button>
         </div>
       </div>
 
       {confirmDelete ? (
-        <div className="confirm-overlay" role="presentation" onClick={() => setConfirmDelete(false)}>
+        <div
+          className="confirm-overlay"
+          role="presentation"
+          onClick={() => setConfirmDelete(false)}
+        >
           <div
             className="confirm-dialog"
             role="alertdialog"
@@ -6672,12 +8211,22 @@ function CashflowSnapshotDetailsModal({ snapshot, accounts, funds, onClose, onEd
             onClick={(event) => event.stopPropagation()}
           >
             <p className="inline-confirm-title">Удалить снимок баланса?</p>
-            <p className="inline-confirm-text">"{accountName} · {fundName}" будет удалён из списка балансов.</p>
+            <p className="inline-confirm-text">
+              "{accountName} · {fundName}" будет удалён из списка балансов.
+            </p>
             <div className="inline-confirm-actions">
-              <button className="secondary-action-button" type="button" onClick={() => setConfirmDelete(false)}>
+              <button
+                className="secondary-action-button"
+                type="button"
+                onClick={() => setConfirmDelete(false)}
+              >
                 Отмена
               </button>
-              <button className="secondary-action-button danger solid" type="button" onClick={onDelete}>
+              <button
+                className="secondary-action-button danger solid"
+                type="button"
+                onClick={onDelete}
+              >
                 Да, удалить
               </button>
             </div>
@@ -6685,129 +8234,237 @@ function CashflowSnapshotDetailsModal({ snapshot, accounts, funds, onClose, onEd
         </div>
       ) : null}
     </ModalShell>
-  );
+  )
 }
 
 function CashflowAccountEditorModal({ account, onClose, onSave }) {
-  const isCreateMode = !account;
+  const isCreateMode = !account
   const [form, setForm] = useState(() => ({
     name: account?.name ?? "",
     owner: account?.owner ?? "shared",
     accountType: account?.accountType ?? "bank",
     defaultCurrency: account?.defaultCurrency ?? DEFAULT_CASHFLOW_CURRENCY,
     isActive: account?.isActive ?? true,
-  }));
-  const isValid = form.name.trim().length > 0;
+  }))
+  const isValid = form.name.trim().length > 0
 
   return (
-    <ModalShell title={isCreateMode ? "Новый счёт" : "Изменить счёт"} onClose={onClose} compact>
+    <ModalShell
+      title={isCreateMode ? "Новый счёт" : "Изменить счёт"}
+      onClose={onClose}
+      compact
+    >
       <div className="modal-header">
         <h2>{isCreateMode ? "Добавить счёт" : "Изменить счёт"}</h2>
       </div>
       <div className="modal-form">
         <label className="field">
-          <span className="field-head"><span>Название счёта *</span></span>
-          <input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+          <span className="field-head">
+            <span>Название счёта *</span>
+          </span>
+          <input
+            value={form.name}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, name: event.target.value }))
+            }
+          />
         </label>
         <label className="field">
-          <span className="field-head"><span>Владелец счёта</span></span>
-          <select value={form.owner} onChange={(event) => setForm((current) => ({ ...current, owner: event.target.value }))}>
+          <span className="field-head">
+            <span>Владелец счёта</span>
+          </span>
+          <select
+            value={form.owner}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, owner: event.target.value }))
+            }
+          >
             {cashflowIncomeOwnerOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
         </label>
         <label className="field">
-          <span className="field-head"><span>Тип счёта</span></span>
-          <select value={form.accountType} onChange={(event) => setForm((current) => ({ ...current, accountType: event.target.value }))}>
+          <span className="field-head">
+            <span>Тип счёта</span>
+          </span>
+          <select
+            value={form.accountType}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                accountType: event.target.value,
+              }))
+            }
+          >
             {cashflowAccountTypeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
         </label>
         <label className="field">
-          <span className="field-head"><span>Валюта по умолчанию</span></span>
-          <select value={form.defaultCurrency} onChange={(event) => setForm((current) => ({ ...current, defaultCurrency: event.target.value }))}>
+          <span className="field-head">
+            <span>Валюта по умолчанию</span>
+          </span>
+          <select
+            value={form.defaultCurrency}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                defaultCurrency: event.target.value,
+              }))
+            }
+          >
             {cashflowCurrencyOptions.map((currency) => (
-              <option key={currency} value={currency}>{currency}</option>
+              <option key={currency} value={currency}>
+                {currency}
+              </option>
             ))}
           </select>
         </label>
         <label className="field checkbox-field">
-          <input type="checkbox" checked={form.isActive} onChange={(event) => setForm((current) => ({ ...current, isActive: event.target.checked }))} />
+          <input
+            type="checkbox"
+            checked={form.isActive}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                isActive: event.target.checked,
+              }))
+            }
+          />
           <span>Показывать в списках</span>
         </label>
       </div>
       <div className="editor-footer">
         <div className="editor-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>Отмена</button>
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onClose}
+          >
+            Отмена
+          </button>
           <button
             className="primary-action-button"
             type="button"
             disabled={!isValid}
-            onClick={() => onSave({ ...(account ?? {}), ...form, name: form.name.trim() })}
+            onClick={() =>
+              onSave({ ...(account ?? {}), ...form, name: form.name.trim() })
+            }
           >
             Сохранить
           </button>
         </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
 function CashflowFundEditorModal({ fund, onClose, onSave }) {
-  const isCreateMode = !fund;
+  const isCreateMode = !fund
   const [form, setForm] = useState(() => ({
     name: fund?.name ?? "",
     fundType: fund?.fundType ?? "savings_goal",
     currency: fund?.currency ?? DEFAULT_CASHFLOW_CURRENCY,
     isActive: fund?.isActive ?? true,
-  }));
-  const isValid = form.name.trim().length > 0;
+  }))
+  const isValid = form.name.trim().length > 0
   const typeOptions = [
     { value: "investments", label: "Инвестиции" },
     { value: "savings_goal", label: "Накопления / цели" },
     { value: "free_balance", label: "Свободный остаток" },
-  ];
+  ]
 
   return (
-    <ModalShell title={isCreateMode ? "Новый фонд" : "Изменить фонд"} onClose={onClose} compact>
+    <ModalShell
+      title={isCreateMode ? "Новый фонд" : "Изменить фонд"}
+      onClose={onClose}
+      compact
+    >
       <div className="modal-header">
         <h2>{isCreateMode ? "Добавить фонд" : "Изменить фонд"}</h2>
       </div>
       <div className="modal-form">
         <label className="field">
-          <span className="field-head"><span>Название фонда *</span></span>
-          <input value={form.name} onChange={(event) => setForm((current) => ({ ...current, name: event.target.value }))} />
+          <span className="field-head">
+            <span>Название фонда *</span>
+          </span>
+          <input
+            value={form.name}
+            onChange={(event) =>
+              setForm((current) => ({ ...current, name: event.target.value }))
+            }
+          />
         </label>
         <label className="field">
-          <span className="field-head"><span>Тип фонда</span></span>
+          <span className="field-head">
+            <span>Тип фонда</span>
+          </span>
           <select
             value={form.fundType}
             disabled={Boolean(fund?.isSystem)}
-            onChange={(event) => setForm((current) => ({ ...current, fundType: event.target.value }))}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                fundType: event.target.value,
+              }))
+            }
           >
             {typeOptions.map((option) => (
-              <option key={option.value} value={option.value}>{option.label}</option>
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
             ))}
           </select>
         </label>
         <label className="field">
-          <span className="field-head"><span>Валюта</span></span>
-          <select value={form.currency} onChange={(event) => setForm((current) => ({ ...current, currency: event.target.value }))}>
+          <span className="field-head">
+            <span>Валюта</span>
+          </span>
+          <select
+            value={form.currency}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                currency: event.target.value,
+              }))
+            }
+          >
             {cashflowCurrencyOptions.map((currency) => (
-              <option key={currency} value={currency}>{currency}</option>
+              <option key={currency} value={currency}>
+                {currency}
+              </option>
             ))}
           </select>
         </label>
         <label className="field checkbox-field">
-          <input type="checkbox" checked={form.isActive} onChange={(event) => setForm((current) => ({ ...current, isActive: event.target.checked }))} />
+          <input
+            type="checkbox"
+            checked={form.isActive}
+            onChange={(event) =>
+              setForm((current) => ({
+                ...current,
+                isActive: event.target.checked,
+              }))
+            }
+          />
           <span>Показывать в списках</span>
         </label>
       </div>
       <div className="editor-footer">
         <div className="editor-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>Отмена</button>
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onClose}
+          >
+            Отмена
+          </button>
           <button
             className="primary-action-button"
             type="button"
@@ -6829,7 +8486,7 @@ function CashflowFundEditorModal({ fund, onClose, onSave }) {
         </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
 function CashflowScreen({
@@ -6859,74 +8516,88 @@ function CashflowScreen({
   onOpenEmergencyReserveConfig,
   onRecalculate,
 }) {
-  const currentBalanceEntries = getCurrentBalanceEntries({ snapshots }).map((snapshot) => {
-    const account = accounts.find((item) => item.id === snapshot.accountId);
-    const fund = funds.find((item) => item.id === snapshot.fundId);
-    return {
-      ...snapshot,
-      accountName: account?.name ?? "Счёт",
-      fundName: fund?.name ?? getCashflowSystemFundLabel(fund?.fundType),
-    };
-  });
+  const currentBalanceEntries = getCurrentBalanceEntries({ snapshots }).map(
+    (snapshot) => {
+      const account = accounts.find((item) => item.id === snapshot.accountId)
+      const fund = funds.find((item) => item.id === snapshot.fundId)
+      return {
+        ...snapshot,
+        accountName: account?.name ?? "Счёт",
+        fundName: fund?.name ?? getCashflowSystemFundLabel(fund?.fundType),
+      }
+    }
+  )
   const budgetReserveFundIds = funds
     .filter((fund) => fund.fundType === "budget_reserve")
-    .map((fund) => fund.id);
+    .map((fund) => fund.id)
   const emergencyReserveFundIds = funds
     .filter((fund) => fund.fundType === "emergency_reserve")
-    .map((fund) => fund.id);
+    .map((fund) => fund.id)
   const savingsFundIds = funds
     .filter((fund) => fund.fundType === "savings_goal")
-    .map((fund) => fund.id);
+    .map((fund) => fund.id)
   const investmentFundIds = funds
     .filter((fund) => fund.fundType === "investments")
-    .map((fund) => fund.id);
-  const budgetReserveEntryCount = budgetReserveCurrent > 0
-    ? getCurrentBalanceEntries({
-        snapshots,
-        fundId: funds.find((fund) => fund.fundType === "budget_reserve")?.id ?? null,
-      }).length
-    : 0;
-  const emergencyReserveEntryCount = emergencyReserveCurrent > 0
-    ? getCurrentBalanceEntries({
-        snapshots,
-        fundId: funds.find((fund) => fund.fundType === "emergency_reserve")?.id ?? null,
-      }).length
-    : 0;
+    .map((fund) => fund.id)
+  const budgetReserveEntryCount =
+    budgetReserveCurrent > 0
+      ? getCurrentBalanceEntries({
+          snapshots,
+          fundId:
+            funds.find((fund) => fund.fundType === "budget_reserve")?.id ??
+            null,
+        }).length
+      : 0
+  const emergencyReserveEntryCount =
+    emergencyReserveCurrent > 0
+      ? getCurrentBalanceEntries({
+          snapshots,
+          fundId:
+            funds.find((fund) => fund.fundType === "emergency_reserve")?.id ??
+            null,
+        }).length
+      : 0
   const savingsCurrent = currentBalanceEntries
     .filter((entry) => savingsFundIds.includes(entry.fundId))
-    .reduce((sum, entry) => sum + Number(entry.amountCzk ?? 0), 0);
-  const savingsEntryCount = currentBalanceEntries.filter((entry) => savingsFundIds.includes(entry.fundId)).length;
+    .reduce((sum, entry) => sum + Number(entry.amountCzk ?? 0), 0)
+  const savingsEntryCount = currentBalanceEntries.filter((entry) =>
+    savingsFundIds.includes(entry.fundId)
+  ).length
   const investmentsCurrent = currentBalanceEntries
     .filter((entry) => investmentFundIds.includes(entry.fundId))
-    .reduce((sum, entry) => sum + Number(entry.amountCzk ?? 0), 0);
-  const investmentsEntryCount = currentBalanceEntries.filter((entry) => investmentFundIds.includes(entry.fundId)).length;
+    .reduce((sum, entry) => sum + Number(entry.amountCzk ?? 0), 0)
+  const investmentsEntryCount = currentBalanceEntries.filter((entry) =>
+    investmentFundIds.includes(entry.fundId)
+  ).length
 
-  const prioritizedBalanceEntries = [...currentBalanceEntries].sort((left, right) => {
-    const leftPriority = budgetReserveFundIds.includes(left.fundId)
-      ? 0
-      : emergencyReserveFundIds.includes(left.fundId)
-        ? 1
-        : savingsFundIds.includes(left.fundId)
-          ? 2
-          : investmentFundIds.includes(left.fundId)
-            ? 3
-            : 4;
-    const rightPriority = budgetReserveFundIds.includes(right.fundId)
-      ? 0
-      : emergencyReserveFundIds.includes(right.fundId)
-        ? 1
-        : savingsFundIds.includes(right.fundId)
-          ? 2
-          : investmentFundIds.includes(right.fundId)
-            ? 3
-            : 4;
+  const prioritizedBalanceEntries = [...currentBalanceEntries].sort(
+    (left, right) => {
+      const leftPriority = budgetReserveFundIds.includes(left.fundId)
+        ? 0
+        : emergencyReserveFundIds.includes(left.fundId)
+          ? 1
+          : savingsFundIds.includes(left.fundId)
+            ? 2
+            : investmentFundIds.includes(left.fundId)
+              ? 3
+              : 4
+      const rightPriority = budgetReserveFundIds.includes(right.fundId)
+        ? 0
+        : emergencyReserveFundIds.includes(right.fundId)
+          ? 1
+          : savingsFundIds.includes(right.fundId)
+            ? 2
+            : investmentFundIds.includes(right.fundId)
+              ? 3
+              : 4
 
-    if (leftPriority !== rightPriority) {
-      return leftPriority - rightPriority;
+      if (leftPriority !== rightPriority) {
+        return leftPriority - rightPriority
+      }
+
+      return Number(right.amountCzk ?? 0) - Number(left.amountCzk ?? 0)
     }
-
-    return Number(right.amountCzk ?? 0) - Number(left.amountCzk ?? 0);
-  });
+  )
 
   return (
     <>
@@ -6934,7 +8605,8 @@ function CashflowScreen({
         <p className="eyebrow">Потоки денег</p>
         <h1>Денежный поток</h1>
         <p className="page-note">
-          Смотри, где сейчас лежат деньги и как они распределены между основными фондами семьи.
+          Смотри, где сейчас лежат деньги и как они распределены между основными
+          фондами семьи.
         </p>
       </header>
 
@@ -6952,35 +8624,66 @@ function CashflowScreen({
           <span>{currentMonthLabel}</span>
         </div>
         <div className="cashflow-header-actions">
-          <button className="primary-action-button" type="button" onClick={onRecalculate}>Пересчитать</button>
+          <button
+            className="primary-action-button"
+            type="button"
+            onClick={onRecalculate}
+          >
+            Пересчитать
+          </button>
         </div>
       </section>
 
       <div className="cashflow-summary-grid">
-        <CashflowMetricCard label="Всего капитала" value={`${formatCurrency(totalCapitalCzk)} Kč`} />
+        <CashflowMetricCard
+          label="Всего капитала"
+          value={`${formatCurrency(totalCapitalCzk)} Kč`}
+        />
         <CashflowMetricCard
           label="Бюджетный фонд"
-          value={formatAmountProgress(budgetReserveCurrent, budgetReserveTarget)}
-          note={budgetReserveEntryCount ? `сейчас и цель · ${formatBalanceEntryCount(budgetReserveEntryCount)}` : "сейчас и цель"}
+          value={formatAmountProgress(
+            budgetReserveCurrent,
+            budgetReserveTarget
+          )}
+          note={
+            budgetReserveEntryCount
+              ? `сейчас и цель · ${formatBalanceEntryCount(budgetReserveEntryCount)}`
+              : "сейчас и цель"
+          }
           accent={budgetReserveCurrent < budgetReserveTarget}
           onClick={onOpenBudgetReserveConfig}
         />
         <CashflowMetricCard
           label="Подушка безопасности"
-          value={formatAmountProgress(emergencyReserveCurrent, emergencyReserveTarget)}
-          note={emergencyReserveEntryCount ? `сейчас и цель · ${formatBalanceEntryCount(emergencyReserveEntryCount)}` : "сейчас и цель"}
+          value={formatAmountProgress(
+            emergencyReserveCurrent,
+            emergencyReserveTarget
+          )}
+          note={
+            emergencyReserveEntryCount
+              ? `сейчас и цель · ${formatBalanceEntryCount(emergencyReserveEntryCount)}`
+              : "сейчас и цель"
+          }
           accent={emergencyReserveCurrent < emergencyReserveTarget}
           onClick={onOpenEmergencyReserveConfig}
         />
         <CashflowMetricCard
           label="Сбережения"
           value={`${formatCurrency(savingsCurrent)} Kč`}
-          note={savingsEntryCount ? formatBalanceEntryCount(savingsEntryCount) : "пока нет балансов"}
+          note={
+            savingsEntryCount
+              ? formatBalanceEntryCount(savingsEntryCount)
+              : "пока нет балансов"
+          }
         />
         <CashflowMetricCard
           label="Инвестиции"
           value={`${formatCurrency(investmentsCurrent)} Kč`}
-          note={investmentsEntryCount ? formatBalanceEntryCount(investmentsEntryCount) : "пока нет балансов"}
+          note={
+            investmentsEntryCount
+              ? formatBalanceEntryCount(investmentsEntryCount)
+              : "пока нет балансов"
+          }
         />
       </div>
 
@@ -7003,38 +8706,60 @@ function CashflowScreen({
           ) : (
             <div className="cashflow-empty">Пока нет актуальных балансов.</div>
           )}
-          <button className="add-expense-button cashflow-add-button" type="button" onClick={onAddSnapshot}>
+          <button
+            className="add-expense-button cashflow-add-button"
+            type="button"
+            onClick={onAddSnapshot}
+          >
             Добавить
           </button>
         </section>
       </div>
     </>
-  );
+  )
 }
 
-function RegularExpenseEditorModal({ template, defaults, categories, currentMonthContext, onClose, onSave }) {
-  const isCreateMode = !template;
-  const nextMonthContext = getNextMonthContext(currentMonthContext);
+function RegularExpenseEditorModal({
+  template,
+  defaults,
+  categories,
+  currentMonthContext,
+  onClose,
+  onSave,
+}) {
+  const isCreateMode = !template
+  const nextMonthContext = getNextMonthContext(currentMonthContext)
   const currentAmount = template
-    ? getRegularAmountForPeriod(template, currentMonthContext.year, currentMonthContext.monthName)
-    : null;
-  const [showValidation, setShowValidation] = useState(false);
+    ? getRegularAmountForPeriod(
+        template,
+        currentMonthContext.year,
+        currentMonthContext.monthName
+      )
+    : null
+  const [showValidation, setShowValidation] = useState(false)
   const [form, setForm] = useState(() => ({
     title: template?.title ?? "",
     amount: template ? String(currentAmount) : "",
-    transactionType: template ? (template.cadence === "auto" ? "Автоматическая" : "Ручная") : "",
+    transactionType: template
+      ? template.cadence === "auto"
+        ? "Автоматическая"
+        : "Ручная"
+      : "",
     frequency: template?.frequency ?? defaults?.frequency ?? "Каждый месяц",
     dayOfMonth: template?.dayOfMonth ?? defaults?.dayOfMonth ?? "",
     month: template?.month ?? defaults?.month ?? nextMonthContext.monthShort,
     owner: template?.owner ?? defaults?.owner ?? "",
     payer: template?.payer ?? defaults?.payer ?? "",
-    category: template ? getCategoryOption(template.category, categories) : defaults?.category ?? "",
-  }));
+    category: template
+      ? getCategoryOption(template.category, categories)
+      : (defaults?.category ?? ""),
+  }))
 
-  const updateField = (field, value) => setForm((current) => ({ ...current, [field]: value }));
-  const dayValue = Number(form.dayOfMonth || 0);
-  const isInvalidDay = form.dayOfMonth !== "" && (dayValue < 1 || dayValue > 28);
-  const requiresMonth = form.frequency === "Раз в год";
+  const updateField = (field, value) =>
+    setForm((current) => ({ ...current, [field]: value }))
+  const dayValue = Number(form.dayOfMonth || 0)
+  const isInvalidDay = form.dayOfMonth !== "" && (dayValue < 1 || dayValue > 28)
+  const requiresMonth = form.frequency === "Раз в год"
 
   const isReadyToSave =
     form.title.trim() !== "" &&
@@ -7045,15 +8770,15 @@ function RegularExpenseEditorModal({ template, defaults, categories, currentMont
     form.owner !== "" &&
     form.payer !== "" &&
     form.category !== "" &&
-    (!requiresMonth || form.month !== "");
+    (!requiresMonth || form.month !== "")
 
   const amountWillChange =
-    template && Number(form.amount || 0) !== currentAmount;
+    template && Number(form.amount || 0) !== currentAmount
 
   const handleSave = () => {
     if (!isReadyToSave) {
-      setShowValidation(true);
-      return;
+      setShowValidation(true)
+      return
     }
 
     onSave(template, {
@@ -7066,69 +8791,193 @@ function RegularExpenseEditorModal({ template, defaults, categories, currentMont
       owner: form.owner,
       payer: form.payer,
       category: stripCategoryLabel(form.category),
-    });
-  };
+    })
+  }
+  const footer = (
+    <div className="editor-footer">
+      <p className="modal-footnote">* — обязательно</p>
+      <div className="editor-actions">
+        <button
+          className="secondary-action-button"
+          type="button"
+          onClick={onClose}
+        >
+          Отмена
+        </button>
+        <button
+          className="primary-action-button"
+          type="button"
+          onClick={handleSave}
+        >
+          Сохранить
+        </button>
+      </div>
+    </div>
+  )
 
   return (
-    <ModalShell title={isCreateMode ? "Добавить регулярную трату" : "Изменить регулярную трату"} onClose={onClose}>
+    <ModalShell
+      title={
+        isCreateMode ? "Добавить регулярную трату" : "Изменить регулярную трату"
+      }
+      onClose={onClose}
+      footer={footer}
+      compact
+      mobileScreen
+    >
       <div className="modal-header">
-        <h2>{isCreateMode ? "Добавить регулярную трату" : "Изменить регулярную трату"}</h2>
+        <h2>
+          {isCreateMode
+            ? "Добавить регулярную трату"
+            : "Изменить регулярную трату"}
+        </h2>
       </div>
 
       <div className="modal-form">
-        <label className={showValidation && form.title.trim() === "" ? "field invalid" : "field"}>
-          <span className="field-head"><span>Название *</span></span>
-          <input value={form.title} onChange={(event) => updateField("title", event.target.value)} />
+        <label
+          className={
+            showValidation && form.title.trim() === ""
+              ? "field invalid"
+              : "field"
+          }
+        >
+          <span className="field-head">
+            <span>Название *</span>
+          </span>
+          <input
+            value={form.title}
+            onChange={(event) => updateField("title", event.target.value)}
+          />
         </label>
 
-        <label className={showValidation && form.amount === "" ? "field invalid" : "field"}>
-          <span className="field-head"><span>Сумма *</span></span>
+        <label
+          className={
+            showValidation && form.amount === "" ? "field invalid" : "field"
+          }
+        >
+          <span className="field-head">
+            <span>Сумма *</span>
+          </span>
           <div className="input-with-suffix">
-            <input value={formatNumberInput(form.amount)} onChange={(event) => updateField("amount", parseDigits(event.target.value))} />
+            <input
+              value={formatNumberInput(form.amount)}
+              onChange={(event) =>
+                updateField("amount", parseDigits(event.target.value))
+              }
+            />
             <span>Kč</span>
           </div>
         </label>
 
-        <div className={showValidation && form.transactionType === "" ? "field invalid" : "field"}>
-          <span className="field-head"><span>Тип транзакции *</span></span>
-          <SegmentGroup options={["Ручная", "Автоматическая"]} value={form.transactionType} onChange={(value) => updateField("transactionType", value)} />
+        <div
+          className={
+            showValidation && form.transactionType === ""
+              ? "field invalid"
+              : "field"
+          }
+        >
+          <span className="field-head">
+            <span>Тип транзакции *</span>
+          </span>
+          <SegmentGroup
+            options={["Ручная", "Автоматическая"]}
+            value={form.transactionType}
+            onChange={(value) => updateField("transactionType", value)}
+          />
         </div>
 
         <div className="field">
-          <span className="field-head"><span>Периодичность *</span></span>
-          <SegmentGroup options={["Каждый месяц", "Раз в год"]} value={form.frequency} onChange={(value) => updateField("frequency", value)} />
+          <span className="field-head">
+            <span>Периодичность *</span>
+          </span>
+          <SegmentGroup
+            options={["Каждый месяц", "Раз в год"]}
+            value={form.frequency}
+            onChange={(value) => updateField("frequency", value)}
+          />
         </div>
 
-        <label className={showValidation && (form.dayOfMonth === "" || isInvalidDay) ? "field invalid" : "field"}>
-          <span className="field-head"><span>Число в месяце (1-28) *</span></span>
+        <label
+          className={
+            showValidation && (form.dayOfMonth === "" || isInvalidDay)
+              ? "field invalid"
+              : "field"
+          }
+        >
+          <span className="field-head">
+            <span>Число в месяце (1-28) *</span>
+          </span>
           <input
             value={form.dayOfMonth}
             placeholder="Например, 12"
-            onChange={(event) => updateField("dayOfMonth", parseDigits(event.target.value).slice(0, 2))}
+            onChange={(event) =>
+              updateField(
+                "dayOfMonth",
+                parseDigits(event.target.value).slice(0, 2)
+              )
+            }
           />
         </label>
 
         {requiresMonth ? (
-          <div className={showValidation && form.month === "" ? "field invalid" : "field"}>
-            <span className="field-head"><span>Месяц применения *</span></span>
-            <SegmentGroup options={monthOptions} value={form.month} onChange={(value) => updateField("month", value)} />
+          <div
+            className={
+              showValidation && form.month === "" ? "field invalid" : "field"
+            }
+          >
+            <span className="field-head">
+              <span>Месяц применения *</span>
+            </span>
+            <SegmentGroup
+              options={monthOptions}
+              value={form.month}
+              onChange={(value) => updateField("month", value)}
+            />
           </div>
         ) : null}
 
-        <div className={showValidation && form.owner === "" ? "field invalid" : "field"}>
-          <span className="field-head"><span>Чья это трата? *</span></span>
-          <SegmentGroup options={ownerOptions} value={form.owner} onChange={(value) => updateField("owner", value)} />
-        </div>
-
-        <div className={showValidation && form.payer === "" ? "field invalid" : "field"}>
-          <span className="field-head"><span>Кто платит? *</span></span>
-          <SegmentGroup options={payerOptions} value={form.payer} onChange={(value) => updateField("payer", value)} />
-        </div>
-
-        <div className={showValidation && form.category === "" ? "field invalid" : "field"}>
-          <span className="field-head"><span>Категория *</span></span>
+        <div
+          className={
+            showValidation && form.owner === "" ? "field invalid" : "field"
+          }
+        >
+          <span className="field-head">
+            <span>Чья это трата? *</span>
+          </span>
           <SegmentGroup
-            options={categories.map((category) => formatCategoryOption(category))}
+            options={ownerOptions}
+            value={form.owner}
+            onChange={(value) => updateField("owner", value)}
+          />
+        </div>
+
+        <div
+          className={
+            showValidation && form.payer === "" ? "field invalid" : "field"
+          }
+        >
+          <span className="field-head">
+            <span>Кто платит? *</span>
+          </span>
+          <SegmentGroup
+            options={payerOptions}
+            value={form.payer}
+            onChange={(value) => updateField("payer", value)}
+          />
+        </div>
+
+        <div
+          className={
+            showValidation && form.category === "" ? "field invalid" : "field"
+          }
+        >
+          <span className="field-head">
+            <span>Категория *</span>
+          </span>
+          <SegmentGroup
+            options={categories.map((category) =>
+              formatCategoryOption(category)
+            )}
             value={form.category}
             variant="category"
             onChange={(value) => updateField("category", value)}
@@ -7137,161 +8986,316 @@ function RegularExpenseEditorModal({ template, defaults, categories, currentMont
 
         {amountWillChange ? (
           <p className="regular-editor-note">
-            Новая сумма начнет действовать с {formatMonthYearGenitive(nextMonthContext.monthName, nextMonthContext.year)}.
-            Текущий месяц останется без изменений.
+            Новая сумма начнет действовать с{" "}
+            {formatMonthYearGenitive(
+              nextMonthContext.monthName,
+              nextMonthContext.year
+            )}
+            . Текущий месяц останется без изменений.
           </p>
         ) : (
           <p className="regular-editor-note">
-            Этот шаблон влияет только на будущие платежные периоды и не переписывает уже созданный текущий месяц.
+            Этот шаблон влияет только на будущие платежные периоды и не
+            переписывает уже созданный текущий месяц.
           </p>
         )}
-
-        <div className="editor-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>
-            Отмена
-          </button>
-          <button className="primary-action-button" type="button" onClick={handleSave}>
-            Сохранить
-          </button>
-        </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
-function RegularExpenseStopModal({ template, currentMonthContext, trackedYears, onClose, onSave }) {
-  const availableYears = [...new Set([currentMonthContext.year, ...trackedYears])]
+function RegularExpenseStopModal({
+  template,
+  currentMonthContext,
+  trackedYears,
+  onClose,
+  onSave,
+}) {
+  const availableYears = [
+    ...new Set([currentMonthContext.year, ...trackedYears]),
+  ]
     .filter((year) => year >= currentMonthContext.year)
-    .sort((a, b) => a - b);
-  const [selectedYear, setSelectedYear] = useState(currentMonthContext.year);
-  const [selectedMonth, setSelectedMonth] = useState(currentMonthContext.monthShort);
+    .sort((a, b) => a - b)
+  const [selectedYear, setSelectedYear] = useState(currentMonthContext.year)
+  const [selectedMonth, setSelectedMonth] = useState(
+    currentMonthContext.monthShort
+  )
   const availableMonths =
     selectedYear === currentMonthContext.year
       ? monthOptions.slice(currentMonthContext.monthIndex)
-      : monthOptions;
+      : monthOptions
   useEffect(() => {
     if (!availableMonths.includes(selectedMonth)) {
-      setSelectedMonth(availableMonths[0] ?? currentMonthContext.monthShort);
+      setSelectedMonth(availableMonths[0] ?? currentMonthContext.monthShort)
     }
-  }, [availableMonths, selectedMonth, currentMonthContext.monthShort]);
-  const stopContext = buildMonthContext(selectedYear, selectedMonth);
-  const selectedOrder = getPeriodOrderKey(stopContext.year, stopContext.monthName);
-  const currentMonthOrder = getPeriodOrderKey(currentMonthContext.year, currentMonthContext.monthName);
-  const isBeforeCurrentMonth = selectedOrder < currentMonthOrder;
+  }, [availableMonths, selectedMonth, currentMonthContext.monthShort])
+  const stopContext = buildMonthContext(selectedYear, selectedMonth)
+  const selectedOrder = getPeriodOrderKey(
+    stopContext.year,
+    stopContext.monthName
+  )
+  const currentMonthOrder = getPeriodOrderKey(
+    currentMonthContext.year,
+    currentMonthContext.monthName
+  )
+  const isBeforeCurrentMonth = selectedOrder < currentMonthOrder
+  const footer = (
+    <div className="editor-footer">
+      <div className="editor-actions">
+        <button
+          className="secondary-action-button"
+          type="button"
+          onClick={onClose}
+        >
+          Отмена
+        </button>
+        <button
+          className="primary-action-button"
+          type="button"
+          onClick={() => onSave(template, stopContext)}
+          disabled={isBeforeCurrentMonth}
+        >
+          Остановить
+        </button>
+      </div>
+    </div>
+  )
 
   return (
-    <ModalShell title="Остановить регулярную трату" onClose={onClose}>
+    <ModalShell
+      title="Остановить регулярную трату"
+      onClose={onClose}
+      footer={footer}
+      compact
+      mobileScreen
+    >
       <div className="modal-header">
         <h2>Остановить «{template.title}»</h2>
       </div>
 
       <div className="modal-form">
         <div className="field">
-          <span className="field-head"><span>С какого месяца остановить?</span></span>
-          <SegmentGroup options={availableMonths} value={selectedMonth} onChange={setSelectedMonth} />
+          <span className="field-head">
+            <span>С какого месяца остановить?</span>
+          </span>
+          <SegmentGroup
+            options={availableMonths}
+            value={selectedMonth}
+            onChange={setSelectedMonth}
+          />
         </div>
 
         <div className="field">
-          <span className="field-head"><span>Год</span></span>
-          <SegmentGroup options={availableYears.map(String)} value={String(selectedYear)} onChange={(value) => setSelectedYear(Number(value))} />
+          <span className="field-head">
+            <span>Год</span>
+          </span>
+          <SegmentGroup
+            options={availableYears.map(String)}
+            value={String(selectedYear)}
+            onChange={(value) => setSelectedYear(Number(value))}
+          />
         </div>
 
         <p className="regular-editor-note">
-          Трата останется в истории прошлых месяцев, но перестанет показываться в бюджетах начиная с {formatMonthYearGenitive(stopContext.monthName, stopContext.year)}.
+          Трата останется в истории прошлых месяцев, но перестанет показываться
+          в бюджетах начиная с{" "}
+          {formatMonthYearGenitive(stopContext.monthName, stopContext.year)}.
         </p>
         {isBeforeCurrentMonth ? (
           <p className="regular-editor-note">
-            Остановить можно только начиная с {formatMonthYearGenitive(currentMonthContext.monthName, currentMonthContext.year)}.
+            Остановить можно только начиная с{" "}
+            {formatMonthYearGenitive(
+              currentMonthContext.monthName,
+              currentMonthContext.year
+            )}
+            .
           </p>
         ) : null}
-
-        <div className="sticky-form-actions">
-          <button className="secondary-action-button" type="button" onClick={onClose}>
-            Отмена
-          </button>
-          <button
-            className="primary-action-button"
-            type="button"
-            onClick={() => onSave(template, stopContext)}
-            disabled={isBeforeCurrentMonth}
-          >
-            Остановить
-          </button>
-        </div>
       </div>
     </ModalShell>
-  );
+  )
 }
 
 export default function App() {
-  const currentMonthContext = getCurrentMonthContext();
-  const currentMonthMeta = getMonthMetaByName(currentMonthContext.monthName);
-  const currentMonthLabel = `${currentMonthContext.monthName} ${currentMonthContext.year}`;
-  const currentMonthLabelGenitive = formatMonthYearGenitive(currentMonthContext.monthName, currentMonthContext.year);
-  const nextMonthContext = getNextMonthContext(currentMonthContext);
-  const nextMonthMeta = getMonthMetaByName(nextMonthContext.monthName);
-  const nextMonthLabel = `${nextMonthContext.monthName} ${nextMonthContext.year}`;
-  const nextMonthLabelGenitive = formatMonthYearGenitive(nextMonthContext.monthName, nextMonthContext.year);
-  const initialNavigationState = readNavigationStateFromLocation();
-  const contentRef = useRef(null);
-  const hasInitializedHistoryRef = useRef(false);
-  const skipHistorySyncRef = useRef(false);
-  const [members, setMembers] = useState(getInitialMembers);
-  const [categories, setCategories] = useState(getInitialCategories);
-  const [regularExpenses, setRegularExpenses] = useState(() => getInitialRegularExpenses(getInitialMembers()));
-  const [selectedExpense, setSelectedExpense] = useState(null);
-  const [selectedRegularTemplate, setSelectedRegularTemplate] = useState(null);
-  const [modalMode, setModalMode] = useState("details");
-  const [recurringEditChoice, setRecurringEditChoice] = useState(null);
-  const [currentScreen, setCurrentScreen] = useState(initialNavigationState.screen);
-  const [authSession, setAuthSession] = useState(null);
-  const [authUser, setAuthUser] = useState(null);
-  const [authReady, setAuthReady] = useState(!isSupabaseConfigured);
-  const [authPending, setAuthPending] = useState(false);
-  const [authErrorMessage, setAuthErrorMessage] = useState("");
-  const [dbInitError, setDbInitError] = useState("");
-  const [mobileNavOpen, setMobileNavOpen] = useState(false);
-  const [trackedYears, setTrackedYears] = useState(getInitialTrackedYears);
-  const [expandedYears, setExpandedYears] = useState(() => getInitialExpandedYears(getInitialTrackedYears()));
-  const [analyticsYear, setAnalyticsYear] = useState(() => getCurrentMonthContext().year);
-  const [categoryEditorState, setCategoryEditorState] = useState(null);
-  const [categoryConfirmState, setCategoryConfirmState] = useState(null);
-  const [yearConfirmState, setYearConfirmState] = useState(null);
-  const [yearAddModalOpen, setYearAddModalOpen] = useState(false);
-  const [regularEditorState, setRegularEditorState] = useState(null);
-  const [regularConfirmState, setRegularConfirmState] = useState(null);
-  const [regularStopState, setRegularStopState] = useState(null);
-  const [resetConfirmState, setResetConfirmState] = useState(null);
-  const [cashflowState, setCashflowState] = useState(getInitialCashflowState);
-  const [cashflowHydrated, setCashflowHydrated] = useState(!isSupabaseConfigured);
-  const [cashflowError, setCashflowError] = useState("");
-  const [incomeEditorState, setIncomeEditorState] = useState(null);
-  const [incomeMonthEditorState, setIncomeMonthEditorState] = useState(null);
-  const [snapshotEditorState, setSnapshotEditorState] = useState(null);
-  const [selectedCashflowSnapshot, setSelectedCashflowSnapshot] = useState(null);
-  const [cashflowReserveEditorState, setCashflowReserveEditorState] = useState(null);
-  const [cashflowAccountEditorState, setCashflowAccountEditorState] = useState(null);
-  const [cashflowFundEditorState, setCashflowFundEditorState] = useState(null);
-  const [selectedPeriodContext, setSelectedPeriodContext] = useState(initialNavigationState.periodContext);
-  const [supabaseHouseholdId, setSupabaseHouseholdId] = useState(null);
-  const [dbHydrated, setDbHydrated] = useState(!isSupabaseConfigured);
-  const skipNextDbSyncRef = useRef(false);
-  const latestSnapshotRef = useRef({ members, categories, regularExpenses });
-  const persistInFlightRef = useRef(false);
-  const persistQueuedRef = useRef(false);
-  const persistPromiseRef = useRef(Promise.resolve());
+  const isLocalPreviewEnabled = isLocalPreviewModeEnabled()
+  const canOpenLocalPreview = canUseLocalPreview()
+  const shouldUseSupabase = isSupabaseConfigured && !isLocalPreviewEnabled
+  const currentMonthContext = getCurrentMonthContext()
+  const currentMonthMeta = getMonthMetaByName(currentMonthContext.monthName)
+  const currentMonthLabel = `${currentMonthContext.monthName} ${currentMonthContext.year}`
+  const currentMonthLabelGenitive = formatMonthYearGenitive(
+    currentMonthContext.monthName,
+    currentMonthContext.year
+  )
+  const nextMonthContext = getNextMonthContext(currentMonthContext)
+  const nextMonthMeta = getMonthMetaByName(nextMonthContext.monthName)
+  const nextMonthLabel = `${nextMonthContext.monthName} ${nextMonthContext.year}`
+  const nextMonthLabelGenitive = formatMonthYearGenitive(
+    nextMonthContext.monthName,
+    nextMonthContext.year
+  )
+  const initialNavigationState = useMemo(
+    () =>
+      readNavigationStateFromLocation({
+        buildMonthContext,
+        isKnownMonthName: isKnownBudgetMonthName,
+        normalizeMonthName,
+      }),
+    []
+  )
+  const appShellRef = useRef(null)
+  const contentRef = useRef(null)
+  const mobileMonthSwitcherDockRef = useRef(null)
+  const [members, setMembers] = useState(getInitialMembers)
+  const [categories, setCategories] = useState(getInitialCategories)
+  const [regularExpenses, setRegularExpenses] = useState(() =>
+    getInitialRegularExpenses(getInitialMembers())
+  )
+  const [selectedExpense, setSelectedExpense] = useState(null)
+  const [selectedRegularTemplate, setSelectedRegularTemplate] = useState(null)
+  const [modalMode, setModalMode] = useState("details")
+  const [recurringEditChoice, setRecurringEditChoice] = useState(null)
+  const [currentScreen, setCurrentScreen] = useState(
+    initialNavigationState.screen
+  )
+  const [authSession, setAuthSession] = useState(null)
+  const [authUser, setAuthUser] = useState(null)
+  const [authReady, setAuthReady] = useState(!shouldUseSupabaseStorage())
+  const [authPending, setAuthPending] = useState(false)
+  const [authErrorMessage, setAuthErrorMessage] = useState("")
+  const [dbInitError, setDbInitError] = useState("")
+  const [trackedYears, setTrackedYears] = useState(getInitialTrackedYears)
+  const [expandedYears, setExpandedYears] = useState(() =>
+    getInitialExpandedYears(getInitialTrackedYears())
+  )
+  const [analyticsYear, setAnalyticsYear] = useState(
+    () => getCurrentMonthContext().year
+  )
+  const [categoryEditorState, setCategoryEditorState] = useState(null)
+  const [categoryConfirmState, setCategoryConfirmState] = useState(null)
+  const [yearConfirmState, setYearConfirmState] = useState(null)
+  const [yearAddModalOpen, setYearAddModalOpen] = useState(false)
+  const [regularEditorState, setRegularEditorState] = useState(null)
+  const [regularConfirmState, setRegularConfirmState] = useState(null)
+  const [regularStopState, setRegularStopState] = useState(null)
+  const [resetConfirmState, setResetConfirmState] = useState(null)
+  const [cashflowState, setCashflowState] = useState(getInitialCashflowState)
+  const [cashflowHydrated, setCashflowHydrated] = useState(
+    !shouldUseSupabaseStorage()
+  )
+  const [cashflowError, setCashflowError] = useState("")
+  const [incomeEditorState, setIncomeEditorState] = useState(null)
+  const [incomeMonthEditorState, setIncomeMonthEditorState] = useState(null)
+  const [snapshotEditorState, setSnapshotEditorState] = useState(null)
+  const [selectedCashflowSnapshot, setSelectedCashflowSnapshot] = useState(null)
+  const [cashflowReserveEditorState, setCashflowReserveEditorState] =
+    useState(null)
+  const [isMobileMonthSwitcherPinned, setIsMobileMonthSwitcherPinned] =
+    useState(false)
+  const [cashflowAccountEditorState, setCashflowAccountEditorState] =
+    useState(null)
+  const [cashflowFundEditorState, setCashflowFundEditorState] = useState(null)
+  const [selectedPeriodContext, setSelectedPeriodContext] = useState(
+    initialNavigationState.periodContext
+  )
+  const [supabaseHouseholdId, setSupabaseHouseholdId] = useState(null)
+  const [dbHydrated, setDbHydrated] = useState(!shouldUseSupabaseStorage())
+  const skipNextDbSyncRef = useRef(false)
+  const previewStateAppliedRef = useRef(false)
+  const latestSnapshotRef = useRef({ members, categories, regularExpenses })
+  const persistInFlightRef = useRef(false)
+  const persistQueuedRef = useRef(false)
+  const persistPromiseRef = useRef(Promise.resolve())
 
   const applyRemoteSnapshot = (snapshot) => {
-    const normalizedSnapshot = normalizeBudgetSnapshot(snapshot);
-    skipNextDbSyncRef.current = true;
-    setMembers(normalizedSnapshot.members);
-    setCategories(normalizedSnapshot.categories);
-    setRegularExpenses(normalizedSnapshot.regularExpenses);
-  };
+    const normalizedSnapshot = normalizeBudgetSnapshot(snapshot)
+    skipNextDbSyncRef.current = true
+    setMembers(normalizedSnapshot.members)
+    setCategories(normalizedSnapshot.categories)
+    setRegularExpenses(normalizedSnapshot.regularExpenses)
+  }
 
-  latestSnapshotRef.current = normalizeBudgetSnapshot({ members, categories, regularExpenses });
+  latestSnapshotRef.current = normalizeBudgetSnapshot({
+    members,
+    categories,
+    regularExpenses,
+  })
 
-  const mobileHeroImage = getMobileHeroImage(currentScreen);
+  useEffect(() => {
+    if (typeof window === "undefined" || previewStateAppliedRef.current) {
+      return
+    }
+
+    const params = readHashSearchParams()
+    const previewRegular = params.get("previewRegular")
+    const previewExpense = params.get("previewExpense")
+
+    if (!previewRegular && !previewExpense) {
+      return
+    }
+
+    if (
+      previewRegular &&
+      currentScreen === "regular" &&
+      regularExpenses.length
+    ) {
+      const matchedTemplate = regularExpenses.find(
+        (template) => template.title === previewRegular
+      )
+      if (matchedTemplate) {
+        previewStateAppliedRef.current = true
+        setSelectedRegularTemplate(matchedTemplate)
+        setModalMode("details")
+      }
+      return
+    }
+
+    if (previewExpense && members.length) {
+      const matchedMember = members.find((member) =>
+        member.expenses.some((expense) => expense.title === previewExpense)
+      )
+      const matchedExpense = matchedMember?.expenses.find(
+        (expense) => expense.title === previewExpense
+      )
+
+      if (matchedMember && matchedExpense) {
+        previewStateAppliedRef.current = true
+        setSelectedExpense({ member: matchedMember, expense: matchedExpense })
+        setModalMode("details")
+      }
+    }
+  }, [currentScreen, members, regularExpenses])
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !canOpenLocalPreview) {
+      return
+    }
+
+    const handleHashChange = () => {
+      if (isLocalPreviewModeEnabled() !== isLocalPreviewEnabled) {
+        window.location.reload()
+      }
+    }
+
+    window.addEventListener("hashchange", handleHashChange)
+    return () => window.removeEventListener("hashchange", handleHashChange)
+  }, [canOpenLocalPreview, isLocalPreviewEnabled])
+
+  const activeBackgroundMonthContext = getActiveBackgroundMonthContext(
+    currentScreen,
+    currentMonthContext,
+    nextMonthContext,
+    selectedPeriodContext
+  )
+  const activeMonthBackgroundImage = getMonthBackgroundByName(
+    activeBackgroundMonthContext.monthName
+  )
+  const mobileHeroImage = activeMonthBackgroundImage
+  const appShellStyle = activeMonthBackgroundImage
+    ? {
+        "--app-month-image": `url(${activeMonthBackgroundImage})`,
+      }
+    : undefined
   const mobileSwitcherMonthContext =
     currentScreen === "month"
       ? currentMonthContext
@@ -7299,89 +9303,85 @@ export default function App() {
         ? nextMonthContext
         : currentScreen === "periodMonth" && selectedPeriodContext
           ? selectedPeriodContext
-          : null;
+          : null
   const mobileSwitcherPrevContext = mobileSwitcherMonthContext
     ? shiftMonthContext(mobileSwitcherMonthContext, -1)
-    : null;
+    : null
   const mobileSwitcherNextContext = mobileSwitcherMonthContext
     ? shiftMonthContext(mobileSwitcherMonthContext, 1)
-    : null;
-  const mobileHeroClock = new Intl.DateTimeFormat("en-GB", {
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-    timeZone: "Europe/Prague",
-  }).format(new Date());
-  const cashflowAccounts = cashflowState.accounts;
-  const cashflowFunds = cashflowState.funds;
-  const cashflowSnapshots = cashflowState.snapshots;
-  const cashflowIncomeEvents = cashflowState.incomeEvents;
-  const cashflowSettings = cashflowState.settings;
+    : null
+  const cashflowAccounts = cashflowState.accounts
+  const cashflowFunds = cashflowState.funds
+  const cashflowSnapshots = cashflowState.snapshots
+  const cashflowIncomeEvents = cashflowState.incomeEvents
+  const cashflowSettings = cashflowState.settings
 
   const handleNavigate = (item, index) => {
-    setMobileNavOpen(false);
+    const nextState = getNavigationStateForMenuItem(item, index)
+    if (!nextState) {
+      return
+    }
 
-    if (index === 0) {
-      setSelectedPeriodContext(null);
-      setCurrentScreen("months");
-      return;
+    setSelectedPeriodContext(nextState.periodContext)
+    setCurrentScreen(nextState.screen)
+  }
+
+  const handleMobileFooterNavigate = (key) => {
+    const nextState = getNavigationStateForMobileKey(key)
+    if (!nextState) {
+      return
     }
-    if (item === "Денежный поток") {
-      setSelectedPeriodContext(null);
-      setCurrentScreen("cashflow");
-      return;
-    }
-    if (item === "Доходы") {
-      setSelectedPeriodContext(null);
-      setCurrentScreen("incomes");
-      return;
-    }
-    if (item === "Аналитика") {
-      setSelectedPeriodContext(null);
-      setCurrentScreen("analytics");
-      return;
-    }
-    if (item === "Настройка") {
-      setCurrentScreen("settings");
-    }
-  };
+
+    setSelectedPeriodContext(nextState.periodContext)
+    setCurrentScreen(nextState.screen)
+  }
+
+  useNavigationHistory({
+    currentScreen,
+    selectedPeriodContext,
+    setCurrentScreen,
+    setSelectedPeriodContext,
+    buildMonthContext,
+    isKnownMonthName: isKnownBudgetMonthName,
+    normalizeMonthName,
+  })
 
   const scheduleSupabaseSync = () => {
-    if (!isSupabaseConfigured || !authUser || !supabaseHouseholdId) {
-      return;
+    if (!shouldUseSupabase || !authUser || !supabaseHouseholdId) {
+      return
     }
 
     if (persistInFlightRef.current) {
-      persistQueuedRef.current = true;
-      return;
+      persistQueuedRef.current = true
+      return
     }
 
-    persistInFlightRef.current = true;
+    persistInFlightRef.current = true
 
     void (async () => {
       try {
         do {
-          persistQueuedRef.current = false;
-          const snapshot = latestSnapshotRef.current;
+          persistQueuedRef.current = false
+          const snapshot = latestSnapshotRef.current
 
           await persistBudgetSnapshotToSupabase({
             householdId: supabaseHouseholdId,
             members: snapshot.members,
             categories: snapshot.categories,
             regularExpenses: snapshot.regularExpenses,
-          });
-        } while (persistQueuedRef.current);
+          })
+        } while (persistQueuedRef.current)
       } catch (error) {
-        console.error("Supabase snapshot sync failed:", error);
+        console.error("Supabase snapshot sync failed:", error)
       } finally {
-        persistInFlightRef.current = false;
+        persistInFlightRef.current = false
       }
-    })();
-  };
+    })()
+  }
 
   const enqueueSnapshotPersist = (snapshot) => {
-    if (!isSupabaseConfigured || !authUser || !supabaseHouseholdId) {
-      return Promise.resolve();
+    if (!shouldUseSupabase || !authUser || !supabaseHouseholdId) {
+      return Promise.resolve()
     }
 
     persistPromiseRef.current = persistPromiseRef.current
@@ -7392,133 +9392,157 @@ export default function App() {
           members: snapshot.members,
           categories: snapshot.categories,
           regularExpenses: snapshot.regularExpenses,
-        }),
-      );
+        })
+      )
 
-    return persistPromiseRef.current;
-  };
+    return persistPromiseRef.current
+  }
 
   const commitSnapshot = async (snapshot) => {
-    if (isSupabaseConfigured && authUser && !supabaseHouseholdId) {
-      throw new Error("Supabase household is not ready");
+    if (shouldUseSupabase && authUser && !supabaseHouseholdId) {
+      throw new Error("Supabase household is not ready")
     }
 
-    const normalizedSnapshot = normalizeBudgetSnapshot(snapshot);
-    latestSnapshotRef.current = normalizedSnapshot;
-    skipNextDbSyncRef.current = true;
-    setMembers(normalizedSnapshot.members);
-    setCategories(normalizedSnapshot.categories);
-    setRegularExpenses(normalizedSnapshot.regularExpenses);
-    await enqueueSnapshotPersist(normalizedSnapshot);
-  };
+    const normalizedSnapshot = normalizeBudgetSnapshot(snapshot)
+    latestSnapshotRef.current = normalizedSnapshot
+    skipNextDbSyncRef.current = true
+    setMembers(normalizedSnapshot.members)
+    setCategories(normalizedSnapshot.categories)
+    setRegularExpenses(normalizedSnapshot.regularExpenses)
+    await enqueueSnapshotPersist(normalizedSnapshot)
+  }
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setAuthReady(true);
-      return;
+    if (!shouldUseSupabase) {
+      setAuthReady(true)
+      setAuthSession(null)
+      setAuthUser(null)
+      setAuthPending(false)
+      setAuthErrorMessage("")
+      return
     }
 
-    let isCancelled = false;
-    const supabase = requireSupabase();
+    let isCancelled = false
+    const supabase = requireSupabase()
 
     supabase.auth.getSession().then(({ data, error }) => {
       if (isCancelled) {
-        return;
+        return
       }
 
       if (error) {
-        console.error("Supabase auth session fetch failed:", error);
-        setAuthErrorMessage("Не удалось проверить текущую сессию Google.");
+        console.error("Supabase auth session fetch failed:", error)
+        setAuthErrorMessage("Не удалось проверить текущую сессию Google.")
       }
 
-      setAuthSession(data.session ?? null);
-      setAuthUser(data.session?.user ?? null);
-      setAuthReady(true);
-      setAuthPending(false);
-    });
+      setAuthSession(data.session ?? null)
+      setAuthUser(data.session?.user ?? null)
+      setAuthReady(true)
+      setAuthPending(false)
+    })
 
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
       if (isCancelled) {
-        return;
+        return
       }
 
-      setAuthSession(session ?? null);
-      setAuthUser(session?.user ?? null);
-      setAuthReady(true);
-      setAuthPending(false);
-      setAuthErrorMessage("");
-    });
+      setAuthSession(session ?? null)
+      setAuthUser(session?.user ?? null)
+      setAuthReady(true)
+      setAuthPending(false)
+      setAuthErrorMessage("")
+    })
 
     return () => {
-      isCancelled = true;
-      subscription.unsubscribe();
-    };
-  }, []);
+      isCancelled = true
+      subscription.unsubscribe()
+    }
+  }, [shouldUseSupabase])
 
   useEffect(() => {
-    if (isSupabaseConfigured) {
-      return;
+    if (shouldUseSupabase) {
+      return
     }
 
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(members));
-  }, [members]);
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(members))
+  }, [members])
 
   useEffect(() => {
-    if (isSupabaseConfigured) {
-      return;
+    if (shouldUseSupabase) {
+      return
     }
 
-    window.localStorage.setItem(CATEGORY_STORAGE_KEY, JSON.stringify(categories));
-  }, [categories]);
+    window.localStorage.setItem(
+      CATEGORY_STORAGE_KEY,
+      JSON.stringify(categories)
+    )
+  }, [categories])
 
   useEffect(() => {
-    if (isSupabaseConfigured) {
-      return;
+    if (shouldUseSupabase) {
+      return
     }
 
-    window.localStorage.setItem(REGULAR_EXPENSES_STORAGE_KEY, JSON.stringify(regularExpenses));
-  }, [regularExpenses]);
+    window.localStorage.setItem(
+      REGULAR_EXPENSES_STORAGE_KEY,
+      JSON.stringify(regularExpenses)
+    )
+  }, [regularExpenses])
 
   useEffect(() => {
-    if (isSupabaseConfigured) {
-      return;
+    if (shouldUseSupabase) {
+      return
     }
 
-    window.localStorage.setItem(CASHFLOW_STORAGE_KEY, JSON.stringify(cashflowState));
-  }, [cashflowState]);
+    window.localStorage.setItem(
+      CASHFLOW_STORAGE_KEY,
+      JSON.stringify(cashflowState)
+    )
+  }, [cashflowState])
 
   useEffect(() => {
     if (typeof window === "undefined") {
-      return;
+      return
     }
 
     try {
-      window.localStorage.setItem(TRACKED_YEARS_STORAGE_KEY, JSON.stringify(trackedYears));
+      window.localStorage.setItem(
+        TRACKED_YEARS_STORAGE_KEY,
+        JSON.stringify(trackedYears)
+      )
     } catch {
       // ignore storage write errors
     }
-  }, [trackedYears]);
+  }, [trackedYears])
 
   useEffect(() => {
     if (typeof window === "undefined") {
-      return;
+      return
     }
 
     try {
       const normalized = Object.fromEntries(
-        trackedYears.map((year, index) => [year, Boolean(expandedYears[year]) || (!Object.prototype.hasOwnProperty.call(expandedYears, year) && index === 0)]),
-      );
-      window.localStorage.setItem(EXPANDED_YEARS_STORAGE_KEY, JSON.stringify(normalized));
+        trackedYears.map((year, index) => [
+          year,
+          Boolean(expandedYears[year]) ||
+            (!Object.prototype.hasOwnProperty.call(expandedYears, year) &&
+              index === 0),
+        ])
+      )
+      window.localStorage.setItem(
+        EXPANDED_YEARS_STORAGE_KEY,
+        JSON.stringify(normalized)
+      )
     } catch {
       // ignore storage write errors
     }
-  }, [expandedYears, trackedYears]);
+  }, [expandedYears, trackedYears])
 
   useEffect(() => {
-    const previousOverflow = document.body.style.overflow;
-    const previousTouchAction = document.body.style.touchAction;
+    const previousOverflow = document.body.style.overflow
+    const previousTouchAction = document.body.style.touchAction
 
     if (
       selectedExpense ||
@@ -7538,932 +9562,468 @@ export default function App() {
       snapshotEditorState ||
       cashflowReserveEditorState
     ) {
-      document.body.style.overflow = "hidden";
-      document.body.style.touchAction = "none";
+      document.body.style.overflow = "hidden"
+      document.body.style.touchAction = "none"
     }
 
     return () => {
-      document.body.style.overflow = previousOverflow;
-      document.body.style.touchAction = previousTouchAction;
-    };
-  }, [selectedExpense, selectedRegularTemplate, categoryEditorState, categoryConfirmState, yearConfirmState, yearAddModalOpen, regularEditorState, recurringEditChoice, regularConfirmState, regularStopState, resetConfirmState, incomeEditorState, incomeMonthEditorState, selectedCashflowSnapshot, snapshotEditorState, cashflowReserveEditorState]);
+      document.body.style.overflow = previousOverflow
+      document.body.style.touchAction = previousTouchAction
+    }
+  }, [
+    selectedExpense,
+    selectedRegularTemplate,
+    categoryEditorState,
+    categoryConfirmState,
+    yearConfirmState,
+    yearAddModalOpen,
+    regularEditorState,
+    recurringEditChoice,
+    regularConfirmState,
+    regularStopState,
+    resetConfirmState,
+    incomeEditorState,
+    incomeMonthEditorState,
+    selectedCashflowSnapshot,
+    snapshotEditorState,
+    cashflowReserveEditorState,
+  ])
 
   useEffect(() => {
-    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
-    contentRef.current?.scrollTo?.({ top: 0, left: 0, behavior: "auto" });
-  }, [currentScreen]);
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" })
+    contentRef.current?.scrollTo?.({ top: 0, left: 0, behavior: "auto" })
+  }, [currentScreen])
 
   useEffect(() => {
-    setMobileNavOpen(false);
-  }, [currentScreen, selectedPeriodContext]);
+    const appShellElement = appShellRef.current
 
-  useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
+    if (!appShellElement) {
+      return
     }
 
-    const nextHash = buildNavigationHash(currentScreen, selectedPeriodContext);
-    const currentHash = window.location.hash.startsWith("#")
-      ? window.location.hash.slice(1)
-      : "";
-    const nextUrl = `${window.location.pathname}${window.location.search}${nextHash ? `#${nextHash}` : ""}`;
+    const updateBackgroundMotion = () => {
+      const scrollTop =
+        window.scrollY ||
+        document.documentElement.scrollTop ||
+        document.body.scrollTop ||
+        0
+      const appImageOffset = Math.max(-28, -10 - scrollTop * 0.035)
+      const mobileHeroOffset = Math.max(-46, -16 - scrollTop * 0.11)
 
-    if (!hasInitializedHistoryRef.current) {
-      hasInitializedHistoryRef.current = true;
+      appShellElement.style.setProperty(
+        "--app-month-image-offset",
+        `${appImageOffset}px`
+      )
+      appShellElement.style.setProperty(
+        "--mobile-hero-scroll-offset",
+        `${mobileHeroOffset}px`
+      )
+    }
 
-      if (nextHash !== currentHash) {
-        window.history.replaceState(null, "", nextUrl);
+    updateBackgroundMotion()
+    window.addEventListener("scroll", updateBackgroundMotion, {
+      passive: true,
+    })
+    window.addEventListener("resize", updateBackgroundMotion)
+
+    return () => {
+      window.removeEventListener("scroll", updateBackgroundMotion)
+      window.removeEventListener("resize", updateBackgroundMotion)
+    }
+  }, [currentScreen, activeMonthBackgroundImage])
+
+  useEffect(() => {
+    const updateMonthSwitcherPinnedState = () => {
+      const dockElement = mobileMonthSwitcherDockRef.current
+
+      if (!dockElement || window.innerWidth > 720) {
+        setIsMobileMonthSwitcherPinned(false)
+        return
       }
-      return;
+
+      const stickyTop = Number.parseFloat(getComputedStyle(dockElement).top) || 0
+      const dockTop = dockElement.getBoundingClientRect().top
+      setIsMobileMonthSwitcherPinned(dockTop <= stickyTop + 1)
     }
 
-    if (skipHistorySyncRef.current) {
-      skipHistorySyncRef.current = false;
-      return;
-    }
+    updateMonthSwitcherPinnedState()
+    window.addEventListener("scroll", updateMonthSwitcherPinnedState, {
+      passive: true,
+    })
+    window.addEventListener("resize", updateMonthSwitcherPinnedState)
 
-    if (nextHash === currentHash) {
-      return;
+    return () => {
+      window.removeEventListener("scroll", updateMonthSwitcherPinnedState)
+      window.removeEventListener("resize", updateMonthSwitcherPinnedState)
     }
-
-    window.history.pushState(null, "", nextUrl);
-  }, [currentScreen, selectedPeriodContext]);
+  }, [currentScreen, mobileSwitcherMonthContext])
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-
-    const handlePopState = () => {
-      const navigationState = readNavigationStateFromLocation();
-      skipHistorySyncRef.current = true;
-      setSelectedPeriodContext(navigationState.periodContext);
-      setCurrentScreen(navigationState.screen);
-    };
-
-    window.addEventListener("popstate", handlePopState);
-    return () => window.removeEventListener("popstate", handlePopState);
-  }, []);
-
-  useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setDbHydrated(true);
-      return;
+    if (!shouldUseSupabase) {
+      setDbHydrated(true)
+      setSupabaseHouseholdId(null)
+      setDbInitError("")
+      return
     }
 
     if (!authReady) {
-      return;
+      return
     }
 
     if (!authUser) {
-      setSupabaseHouseholdId(null);
-      setDbHydrated(false);
-      return;
+      setSupabaseHouseholdId(null)
+      setDbHydrated(false)
+      return
     }
 
-    let isCancelled = false;
+    let isCancelled = false
 
     const initializeSupabaseState = async () => {
       try {
-        setDbHydrated(false);
-        setDbInitError("");
-        const householdId = await ensureHouseholdRecord(authUser);
+        setDbHydrated(false)
+        setDbInitError("")
+        const householdId = await ensureHouseholdRecord(authUser)
         if (isCancelled) {
-          return;
+          return
         }
 
-        setSupabaseHouseholdId(householdId);
+        setSupabaseHouseholdId(householdId)
 
-        const snapshot = await loadBudgetSnapshotFromSupabase(householdId);
+        const snapshot = await loadBudgetSnapshotFromSupabase(householdId)
         if (isCancelled) {
-          return;
+          return
         }
 
-        const hasRemoteData = hasMeaningfulSnapshotData(snapshot);
+        const hasRemoteData = hasMeaningfulSnapshotData(snapshot)
 
         if (hasRemoteData) {
-          applyRemoteSnapshot(snapshot);
+          applyRemoteSnapshot(snapshot)
         } else {
           const fallbackSnapshot = {
             members: createEmptyMembers(),
-            categories: initialCategories.map((category, index) => ensureCategoryColor(category, index)),
+            categories: initialCategories.map((category, index) =>
+              ensureCategoryColor(category, index)
+            ),
             regularExpenses: [],
-          };
+          }
 
-          applyRemoteSnapshot(fallbackSnapshot);
+          applyRemoteSnapshot(fallbackSnapshot)
 
           await persistBudgetSnapshotToSupabase({
             householdId,
             members: fallbackSnapshot.members,
             categories: fallbackSnapshot.categories,
             regularExpenses: fallbackSnapshot.regularExpenses,
-          });
+          })
         }
 
-        setDbHydrated(true);
+        setDbHydrated(true)
       } catch (error) {
-        console.error("Supabase initialization failed:", error);
-        setSupabaseHouseholdId(null);
-        setDbInitError("Не удалось подключить серверное хранилище бюджета. Редактирование временно отключено, чтобы изменения не пропадали после обновления.");
-        setDbHydrated(true);
+        console.error("Supabase initialization failed:", error)
+        setSupabaseHouseholdId(null)
+        setDbInitError(
+          "Не удалось подключить серверное хранилище бюджета. Редактирование временно отключено, чтобы изменения не пропадали после обновления."
+        )
+        setDbHydrated(true)
       }
-    };
+    }
 
-    initializeSupabaseState();
+    initializeSupabaseState()
 
     return () => {
-      isCancelled = true;
-    };
-  }, [authReady, authUser]);
+      isCancelled = true
+    }
+  }, [authReady, authUser, shouldUseSupabase])
 
   useEffect(() => {
-    if (!isSupabaseConfigured || !authUser || !dbHydrated || !supabaseHouseholdId) {
-      return;
+    if (
+      !shouldUseSupabase ||
+      !authUser ||
+      !dbHydrated ||
+      !supabaseHouseholdId
+    ) {
+      return
     }
 
     if (skipNextDbSyncRef.current) {
-      skipNextDbSyncRef.current = false;
-      return;
+      skipNextDbSyncRef.current = false
+      return
     }
 
     const timeoutId = window.setTimeout(() => {
-      scheduleSupabaseSync();
-    }, 250);
+      scheduleSupabaseSync()
+    }, 250)
 
     return () => {
-      window.clearTimeout(timeoutId);
-    };
-  }, [categories, dbHydrated, members, regularExpenses, supabaseHouseholdId]);
+      window.clearTimeout(timeoutId)
+    }
+  }, [
+    categories,
+    dbHydrated,
+    members,
+    regularExpenses,
+    shouldUseSupabase,
+    supabaseHouseholdId,
+  ])
 
   useEffect(() => {
-    if (!isSupabaseConfigured) {
-      setCashflowHydrated(true);
-      return;
+    if (!shouldUseSupabase) {
+      setCashflowHydrated(true)
+      setCashflowError("")
+      return
     }
 
     if (!authReady || !authUser || !supabaseHouseholdId) {
-      return;
+      return
     }
 
-    let isCancelled = false;
+    let isCancelled = false
 
     const loadCashflow = async () => {
       try {
-        setCashflowHydrated(false);
-        setCashflowError("");
-        const loadedState = await loadCashflowStateFromSupabase(supabaseHouseholdId);
+        setCashflowHydrated(false)
+        setCashflowError("")
+        const loadedState =
+          await loadCashflowStateFromSupabase(supabaseHouseholdId)
         if (isCancelled) {
-          return;
+          return
         }
-        setCashflowState(loadedState);
-        setCashflowHydrated(true);
+        setCashflowState(loadedState)
+        setCashflowHydrated(true)
       } catch (error) {
-        console.error("Cashflow load failed:", error);
+        console.error("Cashflow load failed:", error)
         if (isCancelled) {
-          return;
+          return
         }
-        setCashflowError("Не удалось загрузить данные Cashflow.");
-        setCashflowHydrated(true);
+        setCashflowError("Не удалось загрузить данные Cashflow.")
+        setCashflowHydrated(true)
       }
-    };
+    }
 
-    loadCashflow();
+    loadCashflow()
 
     return () => {
-      isCancelled = true;
-    };
-  }, [authReady, authUser, supabaseHouseholdId]);
+      isCancelled = true
+    }
+  }, [authReady, authUser, shouldUseSupabase, supabaseHouseholdId])
 
   useEffect(() => {
-    if (isSupabaseConfigured) {
-      return;
+    if (shouldUseSupabase) {
+      return
     }
 
     setRegularExpenses((currentTemplates) => {
-      const missingTemplates = [];
-      const knownSourceIds = new Set(currentTemplates.map((template) => template.sourceExpenseId).filter(Boolean));
-      const knownTemplateKeys = new Set(currentTemplates.map(getRegularTemplateSemanticKey));
+      const missingTemplates = []
+      const knownSourceIds = new Set(
+        currentTemplates
+          .map((template) => template.sourceExpenseId)
+          .filter(Boolean)
+      )
+      const knownTemplateKeys = new Set(
+        currentTemplates.map(getRegularTemplateSemanticKey)
+      )
 
       members.forEach((member, memberIndex) => {
         member.expenses.forEach((expense, expenseIndex) => {
-          const frequency = expense.frequency ?? detectFrequency(expense);
-          const isRecurring = frequency === "Каждый месяц" || frequency === "Раз в год";
+          const frequency = expense.frequency ?? detectFrequency(expense)
+          const isRecurring =
+            frequency === "Каждый месяц" || frequency === "Раз в год"
           const templateCandidate = buildRegularTemplateFromExpense(
             member,
             {
               ...expense,
               frequency,
-              dayOfMonth: expense.dayOfMonth ?? String(getExpenseDayOfMonth(expense)),
+              dayOfMonth:
+                expense.dayOfMonth ?? String(getExpenseDayOfMonth(expense)),
             },
-            currentTemplates.length + memberIndex * 1000 + expenseIndex,
-          );
-          const dedupKey = getRegularTemplateSemanticKey(templateCandidate);
+            currentTemplates.length + memberIndex * 1000 + expenseIndex
+          )
+          const dedupKey = getRegularTemplateSemanticKey(templateCandidate)
 
-          if (!isRecurring || knownSourceIds.has(expense.id) || knownTemplateKeys.has(dedupKey)) {
-            return;
+          if (
+            !isRecurring ||
+            knownSourceIds.has(expense.id) ||
+            knownTemplateKeys.has(dedupKey)
+          ) {
+            return
           }
 
-          missingTemplates.push(templateCandidate);
-          knownTemplateKeys.add(dedupKey);
-        });
-      });
+          missingTemplates.push(templateCandidate)
+          knownTemplateKeys.add(dedupKey)
+        })
+      })
 
-      return missingTemplates.length ? [...currentTemplates, ...missingTemplates] : currentTemplates;
-    });
-  }, [members]);
+      return missingTemplates.length
+        ? [...currentTemplates, ...missingTemplates]
+        : currentTemplates
+    })
+  }, [members])
 
   useEffect(() => {
     setRegularExpenses((currentTemplates) => {
-      const dedupedTemplates = dedupeRegularTemplates(currentTemplates);
+      const dedupedTemplates = dedupeRegularTemplates(currentTemplates)
 
-      return JSON.stringify(dedupedTemplates) === JSON.stringify(currentTemplates)
+      return JSON.stringify(dedupedTemplates) ===
+        JSON.stringify(currentTemplates)
         ? currentTemplates
-        : dedupedTemplates;
-    });
-  }, []);
-
-  const currentMonthExpenses = useMemo(() => {
-    return buildCombinedMonthExpenses({
-      members,
-      regularExpenses,
-      monthContext: currentMonthContext,
-    });
-  }, [currentMonthContext, members, regularExpenses]);
-
-  const currentMonthTotals = useMemo(() => {
-    return {
-      budget: currentMonthExpenses.reduce((sum, expense) => sum + expense.amount, 0),
-      paid: currentMonthExpenses
-        .filter((expense) => expense.completed)
-        .reduce((sum, expense) => sum + expense.amount, 0),
-    };
-  }, [currentMonthExpenses]);
-
-  const categoryBreakdown = useMemo(() => {
-    return buildCategoryBreakdownFromExpenses(currentMonthExpenses, categories, currentMonthTotals.budget);
-  }, [categories, currentMonthExpenses, currentMonthTotals.budget]);
-
-  const regularExpensesByFrequency = useMemo(() => {
-    const monthly = [];
-    const yearly = [];
-
-    regularExpenses
-      .filter((template) => template.isActive !== false)
-      .sort((left, right) => {
-        const dayDifference = Number(left.dayOfMonth) - Number(right.dayOfMonth);
-        if (dayDifference !== 0) {
-          return dayDifference;
-        }
-
-        return left.title.localeCompare(right.title, "ru");
-      })
-      .forEach((template) => {
-        if (template.frequency === "Раз в год") {
-          yearly.push(template);
-          return;
-        }
-
-        monthly.push(template);
-      });
-
-    return { monthly, yearly };
-  }, [regularExpenses]);
-
-  const regularSummary = useMemo(() => {
-    const upcomingChanges = regularExpenses.filter((template) => getUpcomingRegularChange(template, currentMonthContext));
-    return {
-      total: regularExpenses.filter((template) => template.isActive !== false).length,
-      monthly: regularExpensesByFrequency.monthly.length,
-      yearly: regularExpensesByFrequency.yearly.length,
-      upcomingChanges: upcomingChanges.length,
-    };
-  }, [currentMonthContext, regularExpenses, regularExpensesByFrequency.monthly.length, regularExpensesByFrequency.yearly.length]);
-
-  const projectedNextMonthExpenses = useMemo(() => {
-    return buildCombinedMonthExpenses({
-      members,
-      regularExpenses,
-      monthContext: nextMonthContext,
-    });
-  }, [members, nextMonthContext, regularExpenses]);
-
-  const selectedPeriodIsFuture = useMemo(() => {
-    if (!selectedPeriodContext) {
-      return false;
-    }
-
-    return getPeriodOrderKey(selectedPeriodContext.year, selectedPeriodContext.monthName) >
-      getPeriodOrderKey(currentMonthContext.year, currentMonthContext.monthName);
-  }, [currentMonthContext.monthName, currentMonthContext.year, selectedPeriodContext]);
-
-  const selectedPeriodIsPast = useMemo(() => {
-    if (!selectedPeriodContext) {
-      return false;
-    }
-
-    return getPeriodOrderKey(selectedPeriodContext.year, selectedPeriodContext.monthName) <
-      getPeriodOrderKey(currentMonthContext.year, currentMonthContext.monthName);
-  }, [currentMonthContext.monthName, currentMonthContext.year, selectedPeriodContext]);
-
-  const selectedPeriodExpenses = useMemo(() => {
-    if (!selectedPeriodContext) {
-      return [];
-    }
-
-    if (selectedPeriodIsPast) {
-      return getMemberExpensesForMonth(members, selectedPeriodContext);
-    }
-
-    return buildCombinedMonthExpenses({
-      members,
-      regularExpenses,
-      monthContext: selectedPeriodContext,
-    });
-  }, [members, regularExpenses, selectedPeriodContext, selectedPeriodIsPast]);
-
-  const nextMonthTotals = useMemo(() => {
-    return {
-      budget: projectedNextMonthExpenses.reduce((sum, expense) => sum + expense.amount, 0),
-      paid: 0,
-    };
-  }, [projectedNextMonthExpenses]);
-
-  const selectedPeriodTotals = useMemo(() => {
-    return {
-      budget: selectedPeriodExpenses.reduce((sum, expense) => sum + expense.amount, 0),
-      paid: selectedPeriodExpenses
-        .filter((expense) => expense.completed)
-        .reduce((sum, expense) => sum + expense.amount, 0),
-    };
-  }, [selectedPeriodExpenses]);
-
-  const nextMonthCategoryBreakdown = useMemo(() => {
-    return buildCategoryBreakdownFromExpenses(projectedNextMonthExpenses, categories, nextMonthTotals.budget);
-  }, [categories, nextMonthTotals.budget, projectedNextMonthExpenses]);
-
-  const selectedPeriodCategoryBreakdown = useMemo(() => {
-    return buildCategoryBreakdownFromExpenses(selectedPeriodExpenses, categories, selectedPeriodTotals.budget);
-  }, [categories, selectedPeriodExpenses, selectedPeriodTotals.budget]);
-
-  const cashflowRegularMonthlyReserveBase = useMemo(
-    () =>
-      calculateRegularMonthlyReserveBase({
-        regularExpenses,
-        currentContext: currentMonthContext,
-      }),
-    [currentMonthContext, regularExpenses],
-  );
-
-  const budgetReserveFund = useMemo(
-    () => cashflowFunds.find((fund) => fund.fundType === "budget_reserve") ?? null,
-    [cashflowFunds],
-  );
-  const emergencyReserveFund = useMemo(
-    () => cashflowFunds.find((fund) => fund.fundType === "emergency_reserve") ?? null,
-    [cashflowFunds],
-  );
-  const budgetReserveCurrent = useMemo(
-    () => (budgetReserveFund ? calculateFundCurrentBalance({ fundId: budgetReserveFund.id, snapshots: cashflowSnapshots }) : 0),
-    [budgetReserveFund, cashflowSnapshots],
-  );
-  const emergencyReserveCurrent = useMemo(
-    () => (emergencyReserveFund ? calculateFundCurrentBalance({ fundId: emergencyReserveFund.id, snapshots: cashflowSnapshots }) : 0),
-    [cashflowSnapshots, emergencyReserveFund],
-  );
-  const budgetReserveTarget = useMemo(
-    () => calculateBudgetReserveTarget({ settings: cashflowSettings, funds: cashflowFunds, regularMonthlyReserveBase: cashflowRegularMonthlyReserveBase }),
-    [cashflowFunds, cashflowRegularMonthlyReserveBase, cashflowSettings],
-  );
-  const emergencyReserveTarget = useMemo(
-    () => calculateEmergencyReserveTarget({ settings: cashflowSettings, funds: cashflowFunds, regularMonthlyReserveBase: cashflowRegularMonthlyReserveBase }),
-    [cashflowFunds, cashflowRegularMonthlyReserveBase, cashflowSettings],
-  );
-  const nextMonthBudgetTotalForCashflow = useMemo(
-    () => calculateNextMonthBudgetTotal(projectedNextMonthExpenses),
-    [projectedNextMonthExpenses],
-  );
-  const nextMonthPayerAllocation = useMemo(
-    () => calculatePayerAllocationFromBudgetItems(projectedNextMonthExpenses),
-    [projectedNextMonthExpenses],
-  );
-  const budgetReserveReplenishment = useMemo(
-    () =>
-      calculateBudgetReserveReplenishment({
-        nextMonthBudgetTotal: nextMonthBudgetTotalForCashflow,
-        budgetReserveCurrent,
-      }),
-    [budgetReserveCurrent, nextMonthBudgetTotalForCashflow],
-  );
-  const incomeWaterfall = useMemo(
-    () =>
-      calculateIncomeWaterfall({
-        incomeEvents: cashflowIncomeEvents,
-        currentContext: currentMonthContext,
-        budgetReserveReplenishmentRequired: budgetReserveReplenishment.replenishmentRequired,
-        budgetReserveCurrent,
-        budgetReserveTarget,
-        emergencyReserveCurrent,
-        emergencyReserveTarget,
-      }),
-    [
-      budgetReserveCurrent,
-      budgetReserveReplenishment.replenishmentRequired,
-      budgetReserveTarget,
-      cashflowIncomeEvents,
-      currentMonthContext,
-      emergencyReserveCurrent,
-      emergencyReserveTarget,
-    ],
-  );
-  const cashflowWarnings = useMemo(
-    () =>
-      calculateCashflowWarnings({
-        nextMonthBudgetTotal: nextMonthBudgetTotalForCashflow,
-        budgetReserveCurrent,
-        budgetReserveTarget,
-        emergencyReserveCurrent,
-        emergencyReserveTarget,
-        payerAllocation: nextMonthPayerAllocation,
-        snapshots: cashflowSnapshots,
-      }),
-    [
-      budgetReserveCurrent,
-      budgetReserveTarget,
-      cashflowSnapshots,
-      emergencyReserveCurrent,
-      emergencyReserveTarget,
-      nextMonthBudgetTotalForCashflow,
-      nextMonthPayerAllocation,
-    ],
-  );
-  const cashflowTotalCapital = useMemo(
-    () => calculateTotalCapitalCzk({ snapshots: cashflowSnapshots }),
-    [cashflowSnapshots],
-  );
-
-  const dashboardMembers = useMemo(() => {
-    const payerGroups = Object.fromEntries(
-      [...payerOptions]
-        .sort((left, right) => left.localeCompare(right, "ru"))
-        .map((payer) => {
-          const memberProfile = members.find((member) => member.name === payer);
-
-          return [
-            payer,
-            {
-              id: memberProfile?.id ?? payer.toLowerCase(),
-              name: payer,
-              emoji: memberProfile?.emoji ?? "🙂",
-              expenses: [],
-            },
-          ];
-        }),
-    );
-
-    currentMonthExpenses.forEach((expense) => {
-      const payer = getExpensePayer(expense);
-      if (!payerGroups[payer]) {
-        return;
-      }
-
-      const fallbackMember =
-        expense.sourceMember ??
-        members.find((member) => member.name === normalizeOwnerName(expense.owner, payer)) ??
-        members.find((member) => member.name === payer) ??
-        null;
-
-      payerGroups[payer].expenses.push({
-        ...expense,
-        sourceMember: fallbackMember ?? expense.sourceMember,
-      });
-    });
-
-    return Object.values(payerGroups)
-      .map((member) => ({
-        ...member,
-        expenses: [...member.expenses].sort((left, right) => {
-          const dayDifference = getExpenseDayOfMonth(left) - getExpenseDayOfMonth(right);
-          if (dayDifference !== 0) {
-            return dayDifference;
-          }
-
-          return left.title.localeCompare(right.title, "ru");
-        }),
-      }));
-  }, [currentMonthExpenses, members]);
-
-  const nextMonthMembers = useMemo(() => {
-    const payerGroups = Object.fromEntries(
-      [...payerOptions]
-        .sort((left, right) => left.localeCompare(right, "ru"))
-        .map((payer) => {
-          const memberProfile = members.find((member) => member.name === payer);
-
-          return [
-            payer,
-            {
-              id: `projected-${memberProfile?.id ?? payer.toLowerCase()}`,
-              name: payer,
-              emoji: memberProfile?.emoji ?? "🙂",
-              expenses: [],
-            },
-          ];
-        }),
-    );
-
-    projectedNextMonthExpenses.forEach((expense) => {
-      const payer = getExpensePayer(expense);
-      if (!payerGroups[payer]) {
-        return;
-      }
-
-      payerGroups[payer].expenses.push(expense);
-    });
-
-    return Object.values(payerGroups)
-      .map((member) => ({
-        ...member,
-        expenses: [...member.expenses].sort((left, right) => {
-          const dayDifference = getExpenseDayOfMonth(left) - getExpenseDayOfMonth(right);
-          if (dayDifference !== 0) {
-            return dayDifference;
-          }
-
-          return left.title.localeCompare(right.title, "ru");
-        }),
-      }));
-  }, [members, projectedNextMonthExpenses]);
-
-  const selectedPeriodMembers = useMemo(() => {
-    if (!selectedPeriodContext) {
-      return [];
-    }
-
-    const payerGroups = Object.fromEntries(
-      [...payerOptions]
-        .sort((left, right) => left.localeCompare(right, "ru"))
-        .map((payer) => {
-          const memberProfile = members.find((member) => member.name === payer);
-
-          return [
-            payer,
-            {
-              id: `period-${selectedPeriodContext.year}-${selectedPeriodContext.monthIndex}-${memberProfile?.id ?? payer.toLowerCase()}`,
-              name: payer,
-              emoji: memberProfile?.emoji ?? "🙂",
-              expenses: [],
-            },
-          ];
-        }),
-    );
-
-    selectedPeriodExpenses.forEach((expense) => {
-      const payer = getExpensePayer(expense);
-      if (!payerGroups[payer]) {
-        return;
-      }
-
-      payerGroups[payer].expenses.push(expense);
-    });
-
-    return Object.values(payerGroups)
-      .map((member) => ({
-        ...member,
-        expenses: [...member.expenses].sort((left, right) => {
-          const dayDifference = getExpenseDayOfMonth(left) - getExpenseDayOfMonth(right);
-          if (dayDifference !== 0) {
-            return dayDifference;
-          }
-
-          return left.title.localeCompare(right.title, "ru");
-        }),
-      }));
-  }, [members, selectedPeriodContext, selectedPeriodExpenses]);
-
-  const yearCards = useMemo(() => {
-    const { year: currentYear, monthName: currentMonthName } = getCurrentMonthContext();
-    const currentOrder = getPeriodOrderKey(currentYear, currentMonthName);
-    const aggregates = new Map();
-
-    trackedYears.forEach((year) => {
-      aggregates.set(
-        year,
-        Object.fromEntries(
-          fullMonthNames.map((monthName) => [
-            monthName,
-            { name: monthName, budget: 0, paid: 0, hasData: false, isCurrent: year === currentYear && monthName === currentMonthName },
-          ]),
-        ),
-      );
-    });
-
-    trackedYears.forEach((year) => {
-      fullMonthNames.forEach((monthName) => {
-        const bucket = aggregates.get(year)?.[monthName];
-        if (!bucket) {
-          return;
-        }
-        const monthContext = buildMonthContext(year, monthName);
-        const monthOrder = getPeriodOrderKey(year, monthName);
-        const monthExpenses =
-          monthOrder < currentOrder
-            ? getMemberExpensesForMonth(members, monthContext)
-            : buildCombinedMonthExpenses({
-                members,
-                regularExpenses,
-                monthContext,
-              });
-
-        if (!monthExpenses.length) {
-          return;
-        }
-
-        bucket.budget = monthExpenses.reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
-        bucket.paid = monthExpenses
-          .filter((expense) => expense.completed)
-          .reduce((sum, expense) => sum + Number(expense.amount ?? 0), 0);
-        bucket.hasData = true;
-      });
-    });
-
-    return trackedYears.map((year) => {
-      const months = [...fullMonthNames]
-        .reverse()
-        .map((monthName) => {
-          const month = aggregates.get(year)?.[monthName];
-          return month ? { ...month, year } : null;
-        })
-        .filter(Boolean);
-
-      return {
-        year,
-        budget: months.reduce((sum, month) => sum + month.budget, 0),
-        paid: months.reduce((sum, month) => sum + month.paid, 0),
-        months,
-      };
-    });
-  }, [members, regularExpenses, trackedYears]);
-
-  const analyticsAvailableYears = useMemo(() => yearCards.map((card) => card.year), [yearCards]);
-
-  useEffect(() => {
-    if (analyticsAvailableYears.length === 0) {
-      if (analyticsYear !== currentMonthContext.year) {
-        setAnalyticsYear(currentMonthContext.year);
-      }
-      return;
-    }
-
-    if (!analyticsAvailableYears.includes(analyticsYear)) {
-      setAnalyticsYear(analyticsAvailableYears[0]);
-    }
-  }, [analyticsAvailableYears, analyticsYear, currentMonthContext.year]);
-
-  const analyticsYearExpenses = useMemo(() => {
-    if (!analyticsYear) {
-      return [];
-    }
-
-    const currentOrder = getPeriodOrderKey(currentMonthContext.year, currentMonthContext.monthName);
-
-    return fullMonthNames.flatMap((monthName) => {
-      const monthContext = buildMonthContext(analyticsYear, monthName);
-      const monthOrder = getPeriodOrderKey(analyticsYear, monthName);
-
-      if (monthOrder < currentOrder) {
-        return getMemberExpensesForMonth(members, monthContext);
-      }
-
-      return buildCombinedMonthExpenses({
-        members,
-        regularExpenses,
-        monthContext,
-      });
-    });
-  }, [analyticsYear, currentMonthContext.monthName, currentMonthContext.year, members, regularExpenses]);
-
-  const analyticsYearBudgetTotal = useMemo(
-    () => analyticsYearExpenses.reduce((sum, expense) => sum + expense.amount, 0),
-    [analyticsYearExpenses],
-  );
-
-  const analyticsYearCategoryBreakdown = useMemo(
-    () => buildCategoryBreakdownFromExpenses(analyticsYearExpenses, categories, analyticsYearBudgetTotal),
-    [analyticsYearBudgetTotal, analyticsYearExpenses, categories],
-  );
-
-  const analyticsYearOwnerBreakdown = useMemo(
-    () => buildOwnerBreakdownFromExpenses(analyticsYearExpenses, analyticsYearBudgetTotal),
-    [analyticsYearBudgetTotal, analyticsYearExpenses],
-  );
-
-  const analyticsYearRegularityBreakdown = useMemo(
-    () => buildRegularityBreakdownFromExpenses(analyticsYearExpenses, analyticsYearBudgetTotal),
-    [analyticsYearBudgetTotal, analyticsYearExpenses],
-  );
-
-  const analyticsYearMonthsWithData = useMemo(() => {
-    if (!analyticsYear) {
-      return 0;
-    }
-
-    return fullMonthNames.reduce((count, monthName) => {
-      const monthContext = buildMonthContext(analyticsYear, monthName);
-      const hasAnyExpense = analyticsYearExpenses.some(
-        (expense) => isExpenseInPeriod(expense, monthContext.year, monthContext.monthName),
-      );
-
-      return hasAnyExpense ? count + 1 : count;
-    }, 0);
-  }, [analyticsYear, analyticsYearExpenses]);
-
-  const analyticsYearIncomeSummary = useMemo(
-    () =>
-      calculateYearIncomeSummary({
-        incomeEvents: cashflowIncomeEvents,
-        selectedYear: analyticsYear,
-        currentContext: currentMonthContext,
-        expenseTotal: analyticsYearBudgetTotal,
-      }),
-    [analyticsYear, analyticsYearBudgetTotal, cashflowIncomeEvents, currentMonthContext],
-  );
-
-  const incomeAvailableYears = useMemo(() => {
-    const incomeYears = cashflowIncomeEvents.map((event) => parseSqlDateParts(event.incomeDate).year);
-    const years = new Set([...trackedYears, ...incomeYears, currentMonthContext.year]);
-    return [...years].sort((left, right) => right - left);
-  }, [cashflowIncomeEvents, currentMonthContext.year, trackedYears]);
-
-  const incomeYearSummary = useMemo(
-    () =>
-      calculateYearIncomeSummary({
-        incomeEvents: cashflowIncomeEvents,
-        selectedYear: analyticsYear,
-        currentContext: currentMonthContext,
-        expenseTotal: analyticsYearBudgetTotal,
-      }),
-    [analyticsYear, analyticsYearBudgetTotal, cashflowIncomeEvents, currentMonthContext],
-  );
-
-  const incomeMonthRowsByPeriodKey = useMemo(() => {
-    const rows = new Map();
-
-    incomeAvailableYears.forEach((year) => {
-      fullMonthNames.forEach((monthName, monthIndex) => {
-        rows.set(
-          `${year}-${monthIndex}`,
-          buildIncomeMonthRow({
-            incomeEvents: cashflowIncomeEvents,
-            selectedYear: year,
-            monthName,
-            monthIndex,
-            currentContext: currentMonthContext,
-          }),
-        );
-      });
-    });
-
-    return rows;
-  }, [cashflowIncomeEvents, currentMonthContext, incomeAvailableYears]);
-
-  const incomeYearMonthlyRows = useMemo(() => {
-    return [...fullMonthNames].reverse().map((monthName) => {
-      const monthIndex = fullMonthNames.findIndex((item) => item === monthName);
-      return (
-        incomeMonthRowsByPeriodKey.get(`${analyticsYear}-${monthIndex}`) ??
-        buildIncomeMonthRow({
-          incomeEvents: [],
-          selectedYear: analyticsYear,
-          monthName,
-          monthIndex,
-          currentContext: currentMonthContext,
-        })
-      );
-    });
-  }, [analyticsYear, currentMonthContext, incomeMonthRowsByPeriodKey]);
-
-  const currentMonthIncomeSummary = useMemo(() => {
-    const row =
-      incomeMonthRowsByPeriodKey.get(`${currentMonthContext.year}-${currentMonthContext.monthIndex}`) ??
-      buildIncomeMonthRow({
-        incomeEvents: [],
-        selectedYear: currentMonthContext.year,
-        monthName: currentMonthContext.monthName,
-        monthIndex: currentMonthContext.monthIndex,
-        currentContext: currentMonthContext,
-      });
-
-    return {
-      incomeTotal: row.effectiveTotal,
-      hasIncomeData: row.effectiveTotal > 0,
-    };
-  }, [currentMonthContext, incomeMonthRowsByPeriodKey]);
-
-  const nextMonthIncomeProjection = useMemo(() => {
-    const row =
-      incomeMonthRowsByPeriodKey.get(`${nextMonthContext.year}-${nextMonthContext.monthIndex}`) ??
-      buildIncomeMonthRow({
-        incomeEvents: [],
-        selectedYear: nextMonthContext.year,
-        monthName: nextMonthContext.monthName,
-        monthIndex: nextMonthContext.monthIndex,
-        currentContext: currentMonthContext,
-      });
-
-    return {
-      incomeTotal: row.effectiveTotal,
-      hasIncomeData: row.effectiveTotal > 0,
-    };
-  }, [currentMonthContext, incomeMonthRowsByPeriodKey, nextMonthContext]);
-
-  const selectedPeriodIncomeProjection = useMemo(() => {
-    if (!selectedPeriodContext) {
-      return null;
-    }
-
-    const row =
-      incomeMonthRowsByPeriodKey.get(`${selectedPeriodContext.year}-${selectedPeriodContext.monthIndex}`) ??
-      buildIncomeMonthRow({
-        incomeEvents: [],
-        selectedYear: selectedPeriodContext.year,
-        monthName: selectedPeriodContext.monthName,
-        monthIndex: selectedPeriodContext.monthIndex,
-        currentContext: currentMonthContext,
-      });
-
-    return {
-      incomeTotal: row.effectiveTotal,
-      hasIncomeData: row.effectiveTotal > 0,
-    };
-  }, [currentMonthContext, incomeMonthRowsByPeriodKey, selectedPeriodContext]);
-
-  const currentMonthFinancialSummary = useMemo(
-    () =>
-      buildMonthFinancialSummary({
-        expenses: currentMonthExpenses,
-        incomeTotal: currentMonthIncomeSummary.incomeTotal,
-      }),
-    [currentMonthExpenses, currentMonthIncomeSummary.incomeTotal],
-  );
-
-  const nextMonthFinancialSummary = useMemo(
-    () =>
-      buildMonthFinancialSummary({
-        expenses: projectedNextMonthExpenses,
-        incomeTotal: nextMonthIncomeProjection.incomeTotal,
-      }),
-    [nextMonthIncomeProjection.incomeTotal, projectedNextMonthExpenses],
-  );
-
-  const selectedPeriodFinancialSummary = useMemo(() => {
-    if (!selectedPeriodContext) {
-      return null;
-    }
-
-    return buildMonthFinancialSummary({
-      expenses: selectedPeriodExpenses,
-      incomeTotal: selectedPeriodIncomeProjection?.incomeTotal ?? 0,
-    });
-  }, [selectedPeriodContext, selectedPeriodExpenses, selectedPeriodIncomeProjection]);
+        : dedupedTemplates
+    })
+  }, [])
+
+  const {
+    currentMonthExpenses,
+    currentMonthTotals,
+    categoryBreakdown,
+    regularExpensesByFrequency,
+    regularSummary,
+    projectedNextMonthExpenses,
+    selectedPeriodIsFuture,
+    selectedPeriodExpenses,
+    nextMonthTotals,
+    selectedPeriodTotals,
+    nextMonthCategoryBreakdown,
+    selectedPeriodCategoryBreakdown,
+    dashboardMembers,
+    nextMonthMembers,
+    selectedPeriodMembers,
+    yearCards,
+    analyticsAvailableYears,
+    analyticsYearExpenses,
+    analyticsYearBudgetTotal,
+    analyticsYearCategoryBreakdown,
+    analyticsYearOwnerBreakdown,
+    analyticsYearRegularityBreakdown,
+    analyticsYearMonthsWithData,
+    analyticsYearIncomeSummary,
+    incomeAvailableYears,
+    incomeYearSummary,
+    incomeYearMonthlyRows,
+    currentMonthIncomeSummary,
+    nextMonthIncomeProjection,
+    selectedPeriodIncomeProjection,
+    currentMonthFinancialSummary,
+    nextMonthFinancialSummary,
+    selectedPeriodFinancialSummary,
+  } = useBudgetInsights({
+    members,
+    categories,
+    regularExpenses,
+    trackedYears,
+    analyticsYear,
+    setAnalyticsYear,
+    selectedPeriodContext,
+    currentMonthContext,
+    nextMonthContext,
+    cashflowIncomeEvents,
+    fullMonthNames,
+    payerOptions,
+    buildCombinedMonthExpenses,
+    buildCategoryBreakdownFromExpenses,
+    getUpcomingRegularChange,
+    getPeriodOrderKey,
+    getMemberExpensesForMonth,
+    getExpensePayer,
+    normalizeOwnerName,
+    getExpenseDayOfMonth,
+    buildMonthContext,
+    buildOwnerBreakdownFromExpenses,
+    buildRegularityBreakdownFromExpenses,
+    isExpenseInPeriod,
+    calculateYearIncomeSummary,
+    parseSqlDateParts,
+    buildIncomeMonthRow,
+    buildMonthFinancialSummary,
+  })
+
+  const {
+    cashflowRegularMonthlyReserveBase,
+    budgetReserveFund,
+    emergencyReserveFund,
+    budgetReserveCurrent,
+    emergencyReserveCurrent,
+    budgetReserveTarget,
+    emergencyReserveTarget,
+    nextMonthBudgetTotalForCashflow,
+    nextMonthPayerAllocation,
+    budgetReserveReplenishment,
+    incomeWaterfall,
+    cashflowWarnings,
+    cashflowTotalCapital,
+  } = useCashflowInsights({
+    regularExpenses,
+    currentMonthContext,
+    projectedNextMonthExpenses,
+    cashflowFunds,
+    cashflowSnapshots,
+    cashflowIncomeEvents,
+    cashflowSettings,
+    calculateRegularMonthlyReserveBase,
+    calculateFundCurrentBalance,
+    calculateBudgetReserveTarget,
+    calculateEmergencyReserveTarget,
+    calculateNextMonthBudgetTotal,
+    calculatePayerAllocationFromBudgetItems,
+    calculateBudgetReserveReplenishment,
+    calculateIncomeWaterfall,
+    calculateCashflowWarnings,
+    calculateTotalCapitalCzk,
+  })
 
   const handleToggleExpense = async (memberId, expenseOrId) => {
-    const snapshot = latestSnapshotRef.current;
-    const toggledExpense = typeof expenseOrId === "string" ? null : expenseOrId;
-    const toggledExpenseId = typeof expenseOrId === "string" ? expenseOrId : expenseOrId?.id;
-    const targetMemberId = toggledExpense?.sourceMember?.id ?? memberId;
+    const snapshot = latestSnapshotRef.current
+    const toggledExpense = typeof expenseOrId === "string" ? null : expenseOrId
+    const toggledExpenseId =
+      typeof expenseOrId === "string" ? expenseOrId : expenseOrId?.id
+    const targetMemberId = toggledExpense?.sourceMember?.id ?? memberId
 
     const nextMembers = snapshot.members.map((member) => {
       if (member.id !== targetMemberId) {
-        return member;
+        return member
       }
 
-      const existingIndex = member.expenses.findIndex((expense) => expense.id === toggledExpenseId);
+      const existingIndex = member.expenses.findIndex(
+        (expense) => expense.id === toggledExpenseId
+      )
       if (existingIndex >= 0) {
         return {
           ...member,
           expenses: member.expenses.map((expense, index) =>
             index !== existingIndex
               ? expense
-              : { ...expense, completed: !expense.completed },
+              : { ...expense, completed: !expense.completed }
           ),
-        };
+        }
       }
 
       if (!toggledExpense?.templateId) {
-        return member;
+        return member
       }
 
-      const matchedTemplate = snapshot.regularExpenses.find((template) => template.id === toggledExpense.templateId);
+      const matchedTemplate = snapshot.regularExpenses.find(
+        (template) => template.id === toggledExpense.templateId
+      )
       if (!matchedTemplate) {
-        return member;
+        return member
       }
 
       const materializedExpense = {
-        id: matchedTemplate.sourceExpenseId || toggledExpenseId || `series-expense-${Date.now()}`,
+        id:
+          matchedTemplate.sourceExpenseId ||
+          toggledExpenseId ||
+          `series-expense-${Date.now()}`,
         templateId: matchedTemplate.id,
-        sourceExpenseId: matchedTemplate.sourceExpenseId || toggledExpenseId || null,
+        sourceExpenseId:
+          matchedTemplate.sourceExpenseId || toggledExpenseId || null,
         title: matchedTemplate.title,
-        amount: Number(getRegularAmountForPeriod(matchedTemplate, currentMonthContext.year, currentMonthContext.monthName) ?? toggledExpense.amount ?? 0),
+        amount: Number(
+          getRegularAmountForPeriod(
+            matchedTemplate,
+            currentMonthContext.year,
+            currentMonthContext.monthName
+          ) ??
+            toggledExpense.amount ??
+            0
+        ),
         cadence: matchedTemplate.cadence,
         category: matchedTemplate.category,
         owner: matchedTemplate.owner,
@@ -8481,25 +10041,25 @@ export default function App() {
           urgent: false,
           completed: true,
         }),
-      };
+      }
 
       return {
         ...member,
         expenses: [...member.expenses, materializedExpense],
-      };
-    });
+      }
+    })
 
     await commitSnapshot({
       members: nextMembers,
       categories: snapshot.categories,
       regularExpenses: snapshot.regularExpenses,
-    });
-  };
+    })
+  }
 
   const handleAddExpense = (memberId) => {
-    const member = members.find((item) => item.id === memberId);
+    const member = members.find((item) => item.id === memberId)
     if (!member) {
-      return;
+      return
     }
 
     setSelectedExpense(
@@ -8508,20 +10068,21 @@ export default function App() {
         year: currentMonthContext.year,
         owner: member.name,
         payer: member.name === "Общее" ? "" : member.name,
-      }),
-    );
-    setModalMode("edit");
-  };
+      })
+    )
+    setModalMode("edit")
+  }
 
   const handleAddProjectedExpense = (projectedMember) => {
-    const member = members.find((item) => item.name === projectedMember.name);
+    const member = members.find((item) => item.name === projectedMember.name)
     if (!member) {
-      return;
+      return
     }
 
-    const targetMonthContext = currentScreen === "periodMonth" && selectedPeriodContext
-      ? selectedPeriodContext
-      : nextMonthContext;
+    const targetMonthContext =
+      currentScreen === "periodMonth" && selectedPeriodContext
+        ? selectedPeriodContext
+        : nextMonthContext
 
     setSelectedExpense(
       createEmptyExpenseDraft(member, {
@@ -8529,15 +10090,16 @@ export default function App() {
         year: targetMonthContext.year,
         owner: projectedMember.name,
         payer: projectedMember.name,
-      }),
-    );
-    setModalMode("edit");
-  };
+      })
+    )
+    setModalMode("edit")
+  }
 
   const handleCreateExpenseFromBudgetHub = () => {
-    const commonMember = members.find((item) => item.id === "common") ?? members[0];
+    const commonMember =
+      members.find((item) => item.id === "common") ?? members[0]
     if (!commonMember) {
-      return;
+      return
     }
 
     setSelectedExpense(
@@ -8546,16 +10108,16 @@ export default function App() {
         year: currentMonthContext.year,
         owner: "",
         payer: "",
-      }),
-    );
-    setModalMode("edit");
-  };
+      })
+    )
+    setModalMode("edit")
+  }
 
   const handleSignInWithGoogle = async () => {
     try {
-      setAuthPending(true);
-      setAuthErrorMessage("");
-      const supabase = requireSupabase();
+      setAuthPending(true)
+      setAuthErrorMessage("")
+      const supabase = requireSupabase()
       const { error } = await supabase.auth.signInWithOAuth({
         provider: "google",
         options: {
@@ -8565,92 +10127,114 @@ export default function App() {
             prompt: "select_account",
           },
         },
-      });
+      })
 
       if (error) {
-        throw error;
+        throw error
       }
     } catch (error) {
-      console.error("Google sign-in failed:", error);
-      setAuthPending(false);
-      setAuthErrorMessage("Не удалось открыть вход через Google. Проверь настройку провайдера в Supabase.");
+      console.error("Google sign-in failed:", error)
+      setAuthPending(false)
+      setAuthErrorMessage(
+        "Не удалось открыть вход через Google. Проверь настройку провайдера в Supabase."
+      )
     }
-  };
+  }
 
   const handleSignOut = async () => {
     try {
-      setAuthPending(true);
-      const supabase = requireSupabase();
-      const { error } = await supabase.auth.signOut();
+      setAuthPending(true)
+      const supabase = requireSupabase()
+      const { error } = await supabase.auth.signOut()
       if (error) {
-        throw error;
+        throw error
       }
-      setSupabaseHouseholdId(null);
-      setDbHydrated(false);
+      setSupabaseHouseholdId(null)
+      setDbHydrated(false)
     } catch (error) {
-      console.error("Google sign-out failed:", error);
-      setAuthPending(false);
-      setAuthErrorMessage("Не удалось завершить сессию. Попробуй ещё раз.");
+      console.error("Google sign-out failed:", error)
+      setAuthPending(false)
+      setAuthErrorMessage("Не удалось завершить сессию. Попробуй ещё раз.")
     }
-  };
+  }
 
   const reloadCashflowState = async () => {
-    if (!isSupabaseConfigured || !supabaseHouseholdId) {
-      return;
+    if (!shouldUseSupabase || !supabaseHouseholdId) {
+      return
     }
 
     try {
-      setCashflowHydrated(false);
-      setCashflowError("");
-      const loadedState = await loadCashflowStateFromSupabase(supabaseHouseholdId);
-      setCashflowState(loadedState);
+      setCashflowHydrated(false)
+      setCashflowError("")
+      const loadedState =
+        await loadCashflowStateFromSupabase(supabaseHouseholdId)
+      setCashflowState(loadedState)
     } catch (error) {
-      console.error("Cashflow reload failed:", error);
-      setCashflowError("Не удалось пересчитать или загрузить данные Cashflow.");
+      console.error("Cashflow reload failed:", error)
+      setCashflowError("Не удалось пересчитать или загрузить данные Cashflow.")
     } finally {
-      setCashflowHydrated(true);
+      setCashflowHydrated(true)
     }
-  };
+  }
 
   const handleSaveCashflowIncome = async (eventDraft) => {
-    const normalizedEvent = normalizeCashflowIncomeEvent(eventDraft);
+    const normalizedEvent = normalizeCashflowIncomeEvent(eventDraft)
 
-    if (!isSupabaseConfigured || !supabaseHouseholdId) {
+    if (!shouldUseSupabase || !supabaseHouseholdId) {
       setCashflowState((current) =>
         normalizeCashflowState({
           ...current,
-          incomeEvents: [normalizedEvent, ...current.incomeEvents.filter((item) => item.id !== normalizedEvent.id)],
-        }),
-      );
-      setIncomeEditorState(null);
-      return;
+          incomeEvents: [
+            normalizedEvent,
+            ...current.incomeEvents.filter(
+              (item) => item.id !== normalizedEvent.id
+            ),
+          ],
+        })
+      )
+      setIncomeEditorState(null)
+      return
     }
 
     const savedId = await saveCashflowIncomeEventToSupabase({
       householdId: supabaseHouseholdId,
       event: normalizedEvent,
-    });
-    await reloadCashflowState();
-    setIncomeEditorState(null);
-    return savedId;
-  };
+    })
+    await reloadCashflowState()
+    setIncomeEditorState(null)
+    return savedId
+  }
 
   const handleSaveIncomeMonthPlan = async (monthDraft) => {
-    const incomeDate = buildSqlDate(monthDraft.year, monthDraft.monthIndex + 1, 1);
+    const incomeDate = buildSqlDate(
+      monthDraft.year,
+      monthDraft.monthIndex + 1,
+      1
+    )
     const planEvents = cashflowIncomeEvents.filter((event) => {
-      const eventDate = parseSqlDateParts(event.incomeDate);
+      const eventDate = parseSqlDateParts(event.incomeDate)
       return (
         eventDate.year === monthDraft.year &&
         Math.max(eventDate.month - 1, 0) === monthDraft.monthIndex &&
         event.incomeType === "salary"
-      );
-    });
+      )
+    })
 
-    const existingRoma = planEvents.find((event) => event.status === "expected" && event.owner === "roma");
-    const existingSasha = planEvents.find((event) => event.status === "expected" && event.owner === "sasha");
-    const existingActualRoma = planEvents.find((event) => event.status === "received" && event.owner === "roma");
-    const existingActualSasha = planEvents.find((event) => event.status === "received" && event.owner === "sasha");
-    const legacySharedSalaryEvents = planEvents.filter((event) => event.owner === "shared");
+    const existingRoma = planEvents.find(
+      (event) => event.status === "expected" && event.owner === "roma"
+    )
+    const existingSasha = planEvents.find(
+      (event) => event.status === "expected" && event.owner === "sasha"
+    )
+    const existingActualRoma = planEvents.find(
+      (event) => event.status === "received" && event.owner === "roma"
+    )
+    const existingActualSasha = planEvents.find(
+      (event) => event.status === "received" && event.owner === "sasha"
+    )
+    const legacySharedSalaryEvents = planEvents.filter(
+      (event) => event.owner === "shared"
+    )
 
     const operations = [
       {
@@ -8721,36 +10305,41 @@ export default function App() {
           note: "Фактический доход Саши",
         },
       },
-    ];
+    ]
 
-    if (!isSupabaseConfigured || !supabaseHouseholdId) {
+    if (!shouldUseSupabase || !supabaseHouseholdId) {
       setCashflowState((current) => {
         let nextEvents = current.incomeEvents.filter(
-          (item) => !legacySharedSalaryEvents.some((legacyEvent) => legacyEvent.id === item.id),
-        );
+          (item) =>
+            !legacySharedSalaryEvents.some(
+              (legacyEvent) => legacyEvent.id === item.id
+            )
+        )
 
         operations.forEach(({ existing, amount, payload }) => {
           if (amount > 0) {
             const normalizedPayload = normalizeCashflowIncomeEvent({
               ...payload,
-              id: existing?.id ?? `cashflow-income-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            });
+              id:
+                existing?.id ??
+                `cashflow-income-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            })
             nextEvents = [
               normalizedPayload,
               ...nextEvents.filter((item) => item.id !== normalizedPayload.id),
-            ];
+            ]
           } else if (existing) {
-            nextEvents = nextEvents.filter((item) => item.id !== existing.id);
+            nextEvents = nextEvents.filter((item) => item.id !== existing.id)
           }
-        });
+        })
 
         return normalizeCashflowState({
           ...current,
           incomeEvents: nextEvents,
-        });
-      });
-      setIncomeMonthEditorState(null);
-      return;
+        })
+      })
+      setIncomeMonthEditorState(null)
+      return
     }
 
     for (const { existing, amount, payload } of operations) {
@@ -8758,53 +10347,67 @@ export default function App() {
         await saveCashflowIncomeEventToSupabase({
           householdId: supabaseHouseholdId,
           event: payload,
-        });
-      } else if (existing?.id && !String(existing.id).startsWith("cashflow-income-")) {
-        await deleteCashflowIncomeEventFromSupabase(existing.id);
+        })
+      } else if (
+        existing?.id &&
+        !String(existing.id).startsWith("cashflow-income-")
+      ) {
+        await deleteCashflowIncomeEventFromSupabase(existing.id)
       }
     }
 
     for (const legacyEvent of legacySharedSalaryEvents) {
-      if (legacyEvent?.id && !String(legacyEvent.id).startsWith("cashflow-income-")) {
-        await deleteCashflowIncomeEventFromSupabase(legacyEvent.id);
+      if (
+        legacyEvent?.id &&
+        !String(legacyEvent.id).startsWith("cashflow-income-")
+      ) {
+        await deleteCashflowIncomeEventFromSupabase(legacyEvent.id)
       }
     }
 
-    await reloadCashflowState();
-    setIncomeMonthEditorState(null);
-  };
+    await reloadCashflowState()
+    setIncomeMonthEditorState(null)
+  }
 
   const handleSaveCashflowSnapshot = async (snapshotDraft, accountDraft) => {
-    const normalizedSnapshot = normalizeCashflowSnapshot(snapshotDraft);
+    const normalizedSnapshot = normalizeCashflowSnapshot(snapshotDraft)
 
-    if (!isSupabaseConfigured || !supabaseHouseholdId) {
-      const nextAccount =
-        accountDraft?.name?.trim()
-          ? normalizeCashflowAccount({
-              id: normalizedSnapshot.accountId || `cashflow-account-${Date.now()}`,
-              name: accountDraft.name.trim(),
-              owner: accountDraft.owner,
-              accountType: accountDraft.accountType,
-              defaultCurrency: accountDraft.defaultCurrency,
-            })
-          : null;
-      const accountId = nextAccount?.id || normalizedSnapshot.accountId || "";
+    if (!shouldUseSupabase || !supabaseHouseholdId) {
+      const nextAccount = accountDraft?.name?.trim()
+        ? normalizeCashflowAccount({
+            id:
+              normalizedSnapshot.accountId || `cashflow-account-${Date.now()}`,
+            name: accountDraft.name.trim(),
+            owner: accountDraft.owner,
+            accountType: accountDraft.accountType,
+            defaultCurrency: accountDraft.defaultCurrency,
+          })
+        : null
+      const accountId = nextAccount?.id || normalizedSnapshot.accountId || ""
       setCashflowState((current) =>
         normalizeCashflowState({
           ...current,
           accounts: nextAccount
             ? current.accounts.some((account) => account.id === nextAccount.id)
-              ? current.accounts.map((account) => (account.id === nextAccount.id ? nextAccount : account))
+              ? current.accounts.map((account) =>
+                  account.id === nextAccount.id ? nextAccount : account
+                )
               : [...current.accounts, nextAccount]
             : current.accounts,
           snapshots: [
-            { ...normalizedSnapshot, id: normalizedSnapshot.id || `cashflow-snapshot-${Date.now()}`, accountId },
-            ...current.snapshots.filter((item) => item.id !== normalizedSnapshot.id),
+            {
+              ...normalizedSnapshot,
+              id: normalizedSnapshot.id || `cashflow-snapshot-${Date.now()}`,
+              accountId,
+            },
+            ...current.snapshots.filter(
+              (item) => item.id !== normalizedSnapshot.id
+            ),
           ],
-        }),
-      );
-      setSnapshotEditorState(null);
-      return;
+        })
+      )
+      setSnapshotEditorState(null)
+      return
     }
 
     await saveCashflowSnapshotToSupabase({
@@ -8812,34 +10415,36 @@ export default function App() {
       snapshot: normalizedSnapshot,
       accountDraft,
       existingAccounts: cashflowAccounts,
-    });
-    await reloadCashflowState();
-    setSnapshotEditorState(null);
-  };
+    })
+    await reloadCashflowState()
+    setSnapshotEditorState(null)
+  }
 
   const handleDeleteCashflowSnapshot = async (snapshot) => {
     if (!snapshot) {
-      return;
+      return
     }
 
-    if (!isSupabaseConfigured || !supabaseHouseholdId) {
+    if (!shouldUseSupabase || !supabaseHouseholdId) {
       setCashflowState((current) =>
         normalizeCashflowState({
           ...current,
-          snapshots: current.snapshots.filter((item) => item.id !== snapshot.id),
-        }),
-      );
-      setSelectedCashflowSnapshot(null);
-      return;
+          snapshots: current.snapshots.filter(
+            (item) => item.id !== snapshot.id
+          ),
+        })
+      )
+      setSelectedCashflowSnapshot(null)
+      return
     }
 
     if (snapshot.id && !String(snapshot.id).startsWith("cashflow-snapshot-")) {
-      await deleteCashflowSnapshotFromSupabase(snapshot.id);
+      await deleteCashflowSnapshotFromSupabase(snapshot.id)
     }
 
-    await reloadCashflowState();
-    setSelectedCashflowSnapshot(null);
-  };
+    await reloadCashflowState()
+    setSelectedCashflowSnapshot(null)
+  }
 
   const handleSaveCashflowReserves = async (nextSettings, nextFunds) => {
     const normalizedState = normalizeCashflowState({
@@ -8848,126 +10453,160 @@ export default function App() {
       snapshots: cashflowSnapshots,
       incomeEvents: cashflowIncomeEvents,
       settings: nextSettings,
-    });
+    })
 
-    if (!isSupabaseConfigured || !supabaseHouseholdId) {
-      setCashflowState(normalizedState);
-      setCashflowReserveEditorState(null);
-      return;
+    if (!shouldUseSupabase || !supabaseHouseholdId) {
+      setCashflowState(normalizedState)
+      setCashflowReserveEditorState(null)
+      return
     }
 
     await saveCashflowSettingsToSupabase({
       householdId: supabaseHouseholdId,
       settings: normalizedState.settings,
-      funds: normalizedState.funds.filter((fund) =>
-        fund.fundType === "budget_reserve" || fund.fundType === "emergency_reserve",
+      funds: normalizedState.funds.filter(
+        (fund) =>
+          fund.fundType === "budget_reserve" ||
+          fund.fundType === "emergency_reserve"
       ),
-    });
-    await reloadCashflowState();
-    setCashflowReserveEditorState(null);
-  };
+    })
+    await reloadCashflowState()
+    setCashflowReserveEditorState(null)
+  }
 
   const handleSaveCashflowReserveFund = async (fundDraft) => {
-    const normalizedFund = normalizeCashflowFund(fundDraft);
-    const nextFunds = cashflowFunds.map((fund) => (fund.id === normalizedFund.id ? normalizedFund : fund));
+    const normalizedFund = normalizeCashflowFund(fundDraft)
+    const nextFunds = cashflowFunds.map((fund) =>
+      fund.id === normalizedFund.id ? normalizedFund : fund
+    )
     const normalizedState = normalizeCashflowState({
       accounts: cashflowAccounts,
       funds: nextFunds,
       snapshots: cashflowSnapshots,
       incomeEvents: cashflowIncomeEvents,
       settings: cashflowSettings,
-    });
+    })
 
-    if (!isSupabaseConfigured || !supabaseHouseholdId) {
-      setCashflowState(normalizedState);
-      setCashflowReserveEditorState(null);
-      return;
+    if (!shouldUseSupabase || !supabaseHouseholdId) {
+      setCashflowState(normalizedState)
+      setCashflowReserveEditorState(null)
+      return
     }
 
     await saveCashflowSettingsToSupabase({
       householdId: supabaseHouseholdId,
       settings: normalizedState.settings,
-      funds: nextFunds.filter((fund) =>
-        fund.fundType === "budget_reserve" || fund.fundType === "emergency_reserve",
+      funds: nextFunds.filter(
+        (fund) =>
+          fund.fundType === "budget_reserve" ||
+          fund.fundType === "emergency_reserve"
       ),
-    });
-    await reloadCashflowState();
-    setCashflowReserveEditorState(null);
-  };
+    })
+    await reloadCashflowState()
+    setCashflowReserveEditorState(null)
+  }
 
   const handleSaveCashflowAccount = async (accountDraft) => {
-    const normalizedAccount = normalizeCashflowAccount(accountDraft);
+    const normalizedAccount = normalizeCashflowAccount(accountDraft)
 
-    if (!isSupabaseConfigured || !supabaseHouseholdId) {
+    if (!shouldUseSupabase || !supabaseHouseholdId) {
       setCashflowState((current) =>
         normalizeCashflowState({
           ...current,
-          accounts: current.accounts.some((account) => account.id === normalizedAccount.id)
-            ? current.accounts.map((account) => (account.id === normalizedAccount.id ? normalizedAccount : account))
-            : [...current.accounts, { ...normalizedAccount, id: normalizedAccount.id || `cashflow-account-${Date.now()}` }],
-        }),
-      );
-      setCashflowAccountEditorState(null);
-      return;
+          accounts: current.accounts.some(
+            (account) => account.id === normalizedAccount.id
+          )
+            ? current.accounts.map((account) =>
+                account.id === normalizedAccount.id
+                  ? normalizedAccount
+                  : account
+              )
+            : [
+                ...current.accounts,
+                {
+                  ...normalizedAccount,
+                  id: normalizedAccount.id || `cashflow-account-${Date.now()}`,
+                },
+              ],
+        })
+      )
+      setCashflowAccountEditorState(null)
+      return
     }
 
-    await saveCashflowAccountToSupabase({ householdId: supabaseHouseholdId, account: normalizedAccount });
-    await reloadCashflowState();
-    setCashflowAccountEditorState(null);
-  };
+    await saveCashflowAccountToSupabase({
+      householdId: supabaseHouseholdId,
+      account: normalizedAccount,
+    })
+    await reloadCashflowState()
+    setCashflowAccountEditorState(null)
+  }
 
   const handleDeleteCashflowAccount = async (account) => {
     if (!account) {
-      return;
+      return
     }
 
-    if (cashflowSnapshots.some((snapshot) => snapshot.accountId === account.id)) {
+    if (
+      cashflowSnapshots.some((snapshot) => snapshot.accountId === account.id)
+    ) {
       setCategoryConfirmState({
         title: "Нельзя удалить счёт",
         description: `Счёт "${account.name}" уже используется в снимках баланса. Сначала измени или удали эти снимки.`,
         onConfirm: () => setCategoryConfirmState(null),
-      });
-      return;
+      })
+      return
     }
 
-    if (!isSupabaseConfigured || !supabaseHouseholdId) {
+    if (!shouldUseSupabase || !supabaseHouseholdId) {
       setCashflowState((current) =>
         normalizeCashflowState({
           ...current,
           accounts: current.accounts.filter((item) => item.id !== account.id),
-        }),
-      );
-      return;
+        })
+      )
+      return
     }
 
-    await deleteCashflowAccountFromSupabase(account.id);
-    await reloadCashflowState();
-  };
+    await deleteCashflowAccountFromSupabase(account.id)
+    await reloadCashflowState()
+  }
 
   const handleSaveCashflowFund = async (fundDraft) => {
-    const normalizedFund = normalizeCashflowFund(fundDraft);
+    const normalizedFund = normalizeCashflowFund(fundDraft)
 
-    if (!isSupabaseConfigured || !supabaseHouseholdId) {
+    if (!shouldUseSupabase || !supabaseHouseholdId) {
       setCashflowState((current) =>
         normalizeCashflowState({
           ...current,
           funds: current.funds.some((fund) => fund.id === normalizedFund.id)
-            ? current.funds.map((fund) => (fund.id === normalizedFund.id ? normalizedFund : fund))
-            : [...current.funds, { ...normalizedFund, id: normalizedFund.id || `cashflow-fund-${Date.now()}` }],
-        }),
-      );
-      setCashflowFundEditorState(null);
-      return;
+            ? current.funds.map((fund) =>
+                fund.id === normalizedFund.id ? normalizedFund : fund
+              )
+            : [
+                ...current.funds,
+                {
+                  ...normalizedFund,
+                  id: normalizedFund.id || `cashflow-fund-${Date.now()}`,
+                },
+              ],
+        })
+      )
+      setCashflowFundEditorState(null)
+      return
     }
 
-    await saveCashflowFundToSupabase({ householdId: supabaseHouseholdId, fund: normalizedFund });
-    await reloadCashflowState();
-    setCashflowFundEditorState(null);
-  };
+    await saveCashflowFundToSupabase({
+      householdId: supabaseHouseholdId,
+      fund: normalizedFund,
+    })
+    await reloadCashflowState()
+    setCashflowFundEditorState(null)
+  }
 
   const handleDeleteCashflowFund = async (fund) => {
     if (!fund) {
-      return;
+      return
     }
 
     if (fund.isSystem) {
@@ -8975,8 +10614,8 @@ export default function App() {
         title: "Нельзя удалить системный фонд",
         description: `Фонд "${fund.name}" системный. Его можно переименовать, но не удалить.`,
         onConfirm: () => setCategoryConfirmState(null),
-      });
-      return;
+      })
+      return
     }
 
     if (cashflowSnapshots.some((snapshot) => snapshot.fundId === fund.id)) {
@@ -8984,23 +10623,23 @@ export default function App() {
         title: "Нельзя удалить фонд",
         description: `Фонд "${fund.name}" уже используется в снимках баланса. Сначала измени или удали эти снимки.`,
         onConfirm: () => setCategoryConfirmState(null),
-      });
-      return;
+      })
+      return
     }
 
-    if (!isSupabaseConfigured || !supabaseHouseholdId) {
+    if (!shouldUseSupabase || !supabaseHouseholdId) {
       setCashflowState((current) =>
         normalizeCashflowState({
           ...current,
           funds: current.funds.filter((item) => item.id !== fund.id),
-        }),
-      );
-      return;
+        })
+      )
+      return
     }
 
-    await deleteCashflowFundFromSupabase(fund.id);
-    await reloadCashflowState();
-  };
+    await deleteCashflowFundFromSupabase(fund.id)
+    await reloadCashflowState()
+  }
 
   if (!authReady) {
     return (
@@ -9011,20 +10650,28 @@ export default function App() {
             Family Budget
           </div>
           <h1>Проверяем вход</h1>
-          <p>Сейчас убедимся, что сессия Google активна, и только потом откроем бюджет.</p>
+          <p>
+            Сейчас убедимся, что сессия Google активна, и только потом откроем
+            бюджет.
+          </p>
         </section>
       </main>
-    );
+    )
   }
 
-  if (isSupabaseConfigured && !authUser) {
+  if (shouldUseSupabase && !authUser) {
     return (
       <AuthScreen
         onSignIn={handleSignInWithGoogle}
         isPending={authPending}
         errorMessage={authErrorMessage}
+        canUsePreview={canOpenLocalPreview}
+        onOpenPreview={() => {
+          window.location.hash = "preview=1"
+          window.location.reload()
+        }}
       />
-    );
+    )
   }
 
   if (!dbHydrated) {
@@ -9039,7 +10686,7 @@ export default function App() {
           <p>Сейчас загрузим категории, траты и шаблоны из Supabase.</p>
         </section>
       </main>
-    );
+    )
   }
 
   if (currentScreen === "cashflow" && !cashflowHydrated) {
@@ -9051,13 +10698,15 @@ export default function App() {
             Family Budget
           </div>
           <h1>Собираем денежный поток</h1>
-          <p>Подтягиваем счета, резервы, снимки баланса и доходы из Supabase.</p>
+          <p>
+            Подтягиваем счета, резервы, снимки баланса и доходы из Supabase.
+          </p>
         </section>
       </main>
-    );
+    )
   }
 
-  if (isSupabaseConfigured && authUser && (dbInitError || !supabaseHouseholdId)) {
+  if (shouldUseSupabase && authUser && (dbInitError || !supabaseHouseholdId)) {
     return (
       <main className="app-shell app-loading-shell">
         <section className="app-loading-card" aria-live="polite">
@@ -9066,83 +10715,96 @@ export default function App() {
             Family Budget
           </div>
           <h1>Серверное хранилище не подключилось</h1>
-          <p>{dbInitError || "Не удалось определить household для этой сессии."}</p>
+          <p>
+            {dbInitError || "Не удалось определить household для этой сессии."}
+          </p>
           <div className="modal-actions">
-            <button type="button" className="button button-secondary" onClick={() => window.location.reload()}>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => window.location.reload()}
+            >
               Повторить
             </button>
-            <button type="button" className="button button-primary" onClick={handleSignOut}>
+            <button
+              type="button"
+              className="button button-primary"
+              onClick={handleSignOut}
+            >
               Выйти
             </button>
           </div>
         </section>
       </main>
-    );
+    )
   }
 
   const handleDeleteExpense = async ({ member, expense }) => {
-    const snapshot = latestSnapshotRef.current;
+    const snapshot = latestSnapshotRef.current
     const nextMembers = snapshot.members.map((currentMember) =>
       currentMember.id !== member.id
         ? currentMember
         : {
             ...currentMember,
-            expenses: currentMember.expenses.filter((item) => item.id !== expense.id),
-          },
-    );
+            expenses: currentMember.expenses.filter(
+              (item) => item.id !== expense.id
+            ),
+          }
+    )
 
     const nextRegularExpenses = snapshot.regularExpenses.filter(
-      (template) => template.sourceExpenseId !== expense.id,
-    );
+      (template) => template.sourceExpenseId !== expense.id
+    )
 
     await commitSnapshot({
       members: nextMembers,
       categories: snapshot.categories,
       regularExpenses: nextRegularExpenses,
-    });
-    setSelectedExpense(null);
-    setModalMode("details");
-  };
+    })
+    setSelectedExpense(null)
+    setModalMode("details")
+  }
 
   const handleRequestEditExpense = (item) => {
-    const { member, expense } = item;
+    const { member, expense } = item
     if (!expense?.templateId) {
-      setSelectedExpense(item);
-      setModalMode("edit");
-      return;
+      setSelectedExpense(item)
+      setModalMode("edit")
+      return
     }
 
-    setRecurringEditChoice({ member, expense });
-    setSelectedExpense(null);
-  };
+    setRecurringEditChoice({ member, expense })
+    setSelectedExpense(null)
+  }
 
   const handleEditRecurringTemplate = () => {
     if (!recurringEditChoice?.expense?.templateId) {
-      return;
+      return
     }
 
     const template = latestSnapshotRef.current.regularExpenses.find(
-      (item) => item.id === recurringEditChoice.expense.templateId,
-    );
+      (item) => item.id === recurringEditChoice.expense.templateId
+    )
 
-    setRecurringEditChoice(null);
+    setRecurringEditChoice(null)
 
     if (!template) {
-      return;
+      return
     }
 
-    setRegularEditorState({ template });
-    setSelectedExpense(null);
-    setModalMode("details");
-  };
+    setRegularEditorState({ template })
+    setSelectedExpense(null)
+    setModalMode("details")
+  }
 
   const handleSaveExpense = async ({ member, expense }, updates) => {
-    const snapshot = latestSnapshotRef.current;
-    const isDraft = Boolean(expense.isDraft);
-    const nextExpenseId = isDraft ? `${member.id}-${Date.now()}` : expense.id;
-    const normalizedPayer = normalizePayerName(updates.payer);
-    const normalizedOwner = normalizeOwnerName(updates.owner, normalizedPayer);
-    const isRecurring = updates.frequency === "Каждый месяц" || updates.frequency === "Раз в год";
+    const snapshot = latestSnapshotRef.current
+    const isDraft = Boolean(expense.isDraft)
+    const nextExpenseId = isDraft ? `${member.id}-${Date.now()}` : expense.id
+    const normalizedPayer = normalizePayerName(updates.payer)
+    const normalizedOwner = normalizeOwnerName(updates.owner, normalizedPayer)
+    const isRecurring =
+      updates.frequency === "Каждый месяц" || updates.frequency === "Раз в год"
     const nextExpense = {
       id: nextExpenseId,
       title: updates.title,
@@ -9163,8 +10825,8 @@ export default function App() {
         month: updates.month,
         urgent: isDraft ? false : expense.urgent,
         completed: isDraft ? false : expense.completed,
-        }),
-    };
+      }),
+    }
 
     const initialEffectiveContext = isRecurring
       ? getInitialRegularEffectiveContext({
@@ -9173,12 +10835,19 @@ export default function App() {
           dayOfMonth: updates.dayOfMonth,
           frequency: updates.frequency,
         })
-      : null;
-    const expenseOrder = getPeriodOrderKey(nextExpense.year ?? currentMonthContext.year, normalizeMonthName(nextExpense.month));
+      : null
+    const expenseOrder = getPeriodOrderKey(
+      nextExpense.year ?? currentMonthContext.year,
+      normalizeMonthName(nextExpense.month)
+    )
     const initialEffectiveOrder = initialEffectiveContext
-      ? getPeriodOrderKey(initialEffectiveContext.year, initialEffectiveContext.monthName)
-      : expenseOrder;
-    const shouldMaterializeDraftExpense = !isDraft || !isRecurring || initialEffectiveOrder <= expenseOrder;
+      ? getPeriodOrderKey(
+          initialEffectiveContext.year,
+          initialEffectiveContext.monthName
+        )
+      : expenseOrder
+    const shouldMaterializeDraftExpense =
+      !isDraft || !isRecurring || initialEffectiveOrder <= expenseOrder
 
     const nextMembers = snapshot.members.map((currentMember) =>
       currentMember.id !== member.id
@@ -9191,25 +10860,27 @@ export default function App() {
                 : currentMember.expenses
               : currentMember.expenses.map((currentExpense) => {
                   if (currentExpense.id !== expense.id) {
-                    return currentExpense;
+                    return currentExpense
                   }
 
-                  return nextExpense;
+                  return nextExpense
                 }),
-          },
-    );
+          }
+    )
 
     const nextRegularExpenses = (() => {
       const existingTemplateIndex = snapshot.regularExpenses.findIndex(
-        (template) => template.sourceExpenseId === nextExpenseId,
-      );
+        (template) => template.sourceExpenseId === nextExpenseId
+      )
 
       if (!isRecurring) {
         if (existingTemplateIndex === -1) {
-          return snapshot.regularExpenses;
+          return snapshot.regularExpenses
         }
 
-        return snapshot.regularExpenses.filter((template) => template.sourceExpenseId !== nextExpenseId);
+        return snapshot.regularExpenses.filter(
+          (template) => template.sourceExpenseId !== nextExpenseId
+        )
       }
 
       const templateExpense = {
@@ -9223,38 +10894,46 @@ export default function App() {
           urgent: false,
           completed: false,
         }),
-      };
+      }
 
       if (existingTemplateIndex === -1) {
         return [
           ...snapshot.regularExpenses,
-          buildRegularTemplateFromExpense(member, templateExpense, snapshot.regularExpenses.length),
-        ];
+          buildRegularTemplateFromExpense(
+            member,
+            templateExpense,
+            snapshot.regularExpenses.length
+          ),
+        ]
       }
 
       return snapshot.regularExpenses.map((template, index) => {
         if (index !== existingTemplateIndex) {
-          return template;
+          return template
         }
 
-        const effectiveYear = templateExpense.year ?? currentMonthContext.year;
-        const effectiveMonth = normalizeMonthName(templateExpense.month);
-        const previousAmount = getRegularAmountForPeriod(template, effectiveYear, effectiveMonth);
+        const effectiveYear = templateExpense.year ?? currentMonthContext.year
+        const effectiveMonth = normalizeMonthName(templateExpense.month)
+        const previousAmount = getRegularAmountForPeriod(
+          template,
+          effectiveYear,
+          effectiveMonth
+        )
         const nextEntry = {
           effectiveYear,
           effectiveMonth,
           amount: templateExpense.amount,
           previousAmount,
           changedAt: new Date().toISOString(),
-        };
+        }
 
         const nextHistory = (template.history ?? []).filter(
           (entry) =>
             !(
               entry.effectiveYear === effectiveYear &&
               normalizeMonthName(entry.effectiveMonth) === effectiveMonth
-            ),
-        );
+            )
+        )
 
         return {
           ...template,
@@ -9269,185 +10948,250 @@ export default function App() {
           history: [...nextHistory, nextEntry].sort(
             (left, right) =>
               getPeriodOrderKey(left.effectiveYear, left.effectiveMonth) -
-              getPeriodOrderKey(right.effectiveYear, right.effectiveMonth),
+              getPeriodOrderKey(right.effectiveYear, right.effectiveMonth)
           ),
-        };
-      });
-    })();
+        }
+      })
+    })()
 
     await commitSnapshot({
       members: nextMembers,
       categories: snapshot.categories,
       regularExpenses: nextRegularExpenses,
-    });
+    })
 
-    setSelectedExpense(null);
-    setModalMode("details");
-  };
+    setSelectedExpense(null)
+    setModalMode("details")
+  }
 
   const handleCreateCategory = async (category) => {
-    const snapshot = latestSnapshotRef.current;
+    const snapshot = latestSnapshotRef.current
+    const normalizedLabel = normalizeCategoryLabel(category.label)
+    const hasDuplicateLabel = snapshot.categories.some(
+      (existingCategory) =>
+        normalizeCategoryLabel(existingCategory.label) === normalizedLabel
+    )
+
+    if (hasDuplicateLabel) {
+      setCategoryConfirmState({
+        title: "Категория уже существует",
+        description: `Категория с названием "${category.label}" уже есть. Используй уникальное название, чтобы не сломать привязку расходов и аналитику.`,
+        onConfirm: () => setCategoryConfirmState(null),
+      })
+      return
+    }
+
     await commitSnapshot({
       members: snapshot.members,
       categories: [...snapshot.categories, category],
       regularExpenses: snapshot.regularExpenses,
-    });
-  };
+    })
+  }
 
   const handleUpdateCategory = async (previousCategory, nextCategory) => {
-    const snapshot = latestSnapshotRef.current;
-    const nextCategories = snapshot.categories.map((category) =>
-      category.id === previousCategory.id ? nextCategory : category,
-    );
-    const nextMembers = snapshot.members.map((member) => ({
-        ...member,
-        expenses: member.expenses.map((expense) =>
-          expense.category !== previousCategory.label
-            ? expense
-            : {
-                ...expense,
-                category: nextCategory.label,
-              },
-        ),
-      }));
-    const nextRegularExpenses = snapshot.regularExpenses.map((template) =>
-        template.category !== previousCategory.label
-          ? template
-          : {
-              ...template,
-              category: nextCategory.label,
-            },
-      );
+    const snapshot = latestSnapshotRef.current
+    const normalizedLabel = normalizeCategoryLabel(nextCategory.label)
+    const hasDuplicateLabel = snapshot.categories.some(
+      (category) =>
+        category.id !== previousCategory.id &&
+        normalizeCategoryLabel(category.label) === normalizedLabel
+    )
 
-    await commitSnapshot({
-      members: nextMembers,
-      categories: nextCategories,
-      regularExpenses: nextRegularExpenses,
-    });
-  };
-
-  const handleDeleteCategory = async (categoryToDelete) => {
-    const snapshot = latestSnapshotRef.current;
-    await commitSnapshot({
-      members: snapshot.members,
-      categories: snapshot.categories.filter((category) => category.id !== categoryToDelete.id),
-      regularExpenses: snapshot.regularExpenses,
-    });
-  };
-
-  const handleSaveCategory = async (previousCategory, nextCategory, usageCount) => {
-    if (!previousCategory) {
-      await handleCreateCategory(nextCategory);
-      setCategoryEditorState(null);
-      return;
+    if (hasDuplicateLabel) {
+      setCategoryConfirmState({
+        title: "Категория уже существует",
+        description: `Категория с названием "${nextCategory.label}" уже есть. Оставь уникальное название, чтобы расходы и шаблоны не смешивались между собой.`,
+        onConfirm: () => setCategoryConfirmState(null),
+      })
+      return
     }
 
-    if (usageCount > 0 && (previousCategory.icon !== nextCategory.icon || previousCategory.label !== nextCategory.label)) {
+    const nextCategories = snapshot.categories.map((category) =>
+      category.id === previousCategory.id ? nextCategory : category
+    )
+    const updatedSnapshot = replaceCategoryLabelInSnapshot(
+      {
+        members: snapshot.members,
+        categories: nextCategories,
+        regularExpenses: snapshot.regularExpenses,
+      },
+      previousCategory.label,
+      nextCategory.label
+    )
+
+    await commitSnapshot({
+      members: updatedSnapshot.members,
+      categories: updatedSnapshot.categories,
+      regularExpenses: updatedSnapshot.regularExpenses,
+    })
+  }
+
+  const handleDeleteCategory = async (categoryToDelete) => {
+    const snapshot = latestSnapshotRef.current
+    const remainingCategories = snapshot.categories.filter(
+      (category) => category.id !== categoryToDelete.id
+    )
+    const nextCategories = ensureFallbackCategory(remainingCategories)
+    const reassignedSnapshot = replaceCategoryLabelInSnapshot(
+      {
+        members: snapshot.members,
+        categories: nextCategories,
+        regularExpenses: snapshot.regularExpenses,
+      },
+      categoryToDelete.label,
+      fallbackCategory.label
+    )
+
+    await commitSnapshot({
+      members: reassignedSnapshot.members,
+      categories: reassignedSnapshot.categories,
+      regularExpenses: reassignedSnapshot.regularExpenses,
+    })
+  }
+
+  const handleSaveCategory = async (
+    previousCategory,
+    nextCategory,
+    usageCount
+  ) => {
+    if (!previousCategory) {
+      await handleCreateCategory(nextCategory)
+      setCategoryEditorState(null)
+      return
+    }
+
+    if (
+      usageCount > 0 &&
+      (previousCategory.icon !== nextCategory.icon ||
+        previousCategory.label !== nextCategory.label)
+    ) {
       setCategoryConfirmState({
         title: "Изменить категорию?",
         description: `Категория используется в ${usageCount} местах. Изменение повлияет на существующие траты и аналитику.`,
         onConfirm: async () => {
-          await handleUpdateCategory(previousCategory, nextCategory);
-          setCategoryConfirmState(null);
-          setCategoryEditorState(null);
+          await handleUpdateCategory(previousCategory, nextCategory)
+          setCategoryConfirmState(null)
+          setCategoryEditorState(null)
         },
-      });
-      return;
+      })
+      return
     }
 
-    await handleUpdateCategory(previousCategory, nextCategory);
-    setCategoryEditorState(null);
-  };
+    await handleUpdateCategory(previousCategory, nextCategory)
+    setCategoryEditorState(null)
+  }
 
   const handleRequestDeleteCategory = (category, usageCount) => {
+    if (
+      normalizeCategoryLabel(category.label) ===
+      normalizeCategoryLabel(fallbackCategory.label)
+    ) {
+      setCategoryConfirmState({
+        title: "Нельзя удалить системную категорию",
+        description: `Категория "${fallbackCategory.label}" нужна как страховка для старых или перенесённых трат. Сначала переведи эти траты в другие категории, и только потом можно будет убрать её из данных вручную.`,
+        onConfirm: () => setCategoryConfirmState(null),
+      })
+      return
+    }
+
+    if (categories.length <= 1) {
+      setCategoryConfirmState({
+        title: "Нельзя удалить последнюю категорию",
+        description:
+          "В бюджете должна остаться хотя бы одна категория, чтобы новые траты и шаблоны можно было безопасно сохранять.",
+        onConfirm: () => setCategoryConfirmState(null),
+      })
+      return
+    }
+
     if (usageCount > 0) {
       setCategoryConfirmState({
         title: "Удалить категорию?",
-        description: `Категория используется в ${usageCount} местах. Удаление может повредить подсчётам в аналитике.`,
+        description: `Категория используется в ${usageCount} местах. При удалении связанные траты и регулярные шаблоны будут автоматически перенесены в категорию "${fallbackCategory.label}".`,
         onConfirm: async () => {
-          await handleDeleteCategory(category);
-          setCategoryConfirmState(null);
+          await handleDeleteCategory(category)
+          setCategoryConfirmState(null)
         },
-      });
-      return;
+      })
+      return
     }
 
-    void handleDeleteCategory(category);
-  };
+    void handleDeleteCategory(category)
+  }
 
   const handleToggleYear = (year) => {
-    setExpandedYears((current) => ({ ...current, [year]: !current[year] }));
-  };
+    setExpandedYears((current) => ({ ...current, [year]: !current[year] }))
+  }
 
   const handleAddYear = () => {
-    setYearAddModalOpen(true);
-  };
+    setYearAddModalOpen(true)
+  }
 
   const handleConfirmAddYear = (selectedYear) => {
     if (!Number.isFinite(selectedYear)) {
-      return;
+      return
     }
 
     setTrackedYears((current) => {
       if (current.includes(selectedYear)) {
-        return current;
+        return current
       }
 
-      return [...current, selectedYear].sort((left, right) => right - left);
-    });
-    setExpandedYears((current) => ({ ...current, [selectedYear]: true }));
-    setYearAddModalOpen(false);
-  };
+      return [...current, selectedYear].sort((left, right) => right - left)
+    })
+    setExpandedYears((current) => ({ ...current, [selectedYear]: true }))
+    setYearAddModalOpen(false)
+  }
 
   const handleDeleteYear = (year) => {
-    const currentYear = getCurrentMonthContext().year;
+    const currentYear = getCurrentMonthContext().year
     if (year <= currentYear) {
-      return;
+      return
     }
 
     setYearConfirmState({
       year,
       onConfirm: () => {
-        setTrackedYears((current) => current.filter((item) => item !== year));
+        setTrackedYears((current) => current.filter((item) => item !== year))
         setExpandedYears((current) => {
-          const next = { ...current };
-          delete next[year];
-          return next;
-        });
-        setYearConfirmState(null);
+          const next = { ...current }
+          delete next[year]
+          return next
+        })
+        setYearConfirmState(null)
       },
-    });
-  };
+    })
+  }
 
   const handleResetBudgetData = async () => {
-    const nextCurrentYear = getCurrentMonthContext().year;
+    const nextCurrentYear = getCurrentMonthContext().year
     await commitSnapshot({
       members: createEmptyMembers(),
       categories: createDefaultCategories(),
       regularExpenses: [],
-    });
-    setTrackedYears(getDefaultTrackedYears(nextCurrentYear));
-    setExpandedYears(getDefaultExpandedYears(nextCurrentYear));
-    setSelectedPeriodContext(null);
-    setCurrentScreen("months");
-  };
+    })
+    setTrackedYears(getDefaultTrackedYears(nextCurrentYear))
+    setExpandedYears(getDefaultExpandedYears(nextCurrentYear))
+    setSelectedPeriodContext(null)
+    setCurrentScreen("months")
+  }
 
   const handleSaveRegularExpense = async (previousTemplate, updates) => {
-    const snapshot = latestSnapshotRef.current;
-    const changedAt = new Date().toISOString();
-    const nextEffectiveContext = getNextMonthContext(currentMonthContext);
-    const normalizedPayer = normalizePayerName(updates.payer);
-    const normalizedOwner = normalizeOwnerName(updates.owner, normalizedPayer);
+    const snapshot = latestSnapshotRef.current
+    const changedAt = new Date().toISOString()
+    const nextEffectiveContext = getNextMonthContext(currentMonthContext)
+    const normalizedPayer = normalizePayerName(updates.payer)
+    const normalizedOwner = normalizeOwnerName(updates.owner, normalizedPayer)
 
     if (!previousTemplate) {
-      const nextSourceExpenseId = `series-expense-${Date.now()}`;
-      const nextTemplateId = `regular-${Date.now()}`;
+      const nextSourceExpenseId = `series-expense-${Date.now()}`
+      const nextTemplateId = `regular-${Date.now()}`
       const initialEffectiveContext = getInitialRegularEffectiveContext({
         seedYear: currentMonthContext.year,
         seedMonthName: currentMonthContext.monthName,
         dayOfMonth: updates.dayOfMonth,
         frequency: updates.frequency,
-      });
+      })
       const nextTemplate = {
         id: nextTemplateId,
         sourceExpenseId: nextSourceExpenseId,
@@ -9472,13 +11216,13 @@ export default function App() {
             changedAt,
           },
         ],
-      };
+      }
 
-      const nextRegularExpenses = [...snapshot.regularExpenses, nextTemplate];
-      let nextMembers = snapshot.members;
+      const nextRegularExpenses = [...snapshot.regularExpenses, nextTemplate]
+      let nextMembers = snapshot.members
 
       if (doesRegularTemplateApplyToMonth(nextTemplate, currentMonthContext)) {
-        const ownerName = normalizedOwner;
+        const ownerName = normalizedOwner
         const currentMonthExpense = {
           id: nextSourceExpenseId,
           title: updates.title,
@@ -9500,87 +11244,92 @@ export default function App() {
             urgent: false,
             completed: false,
           }),
-        };
+        }
 
         nextMembers = snapshot.members.map((member) =>
-            member.name !== ownerName
-              ? member
-              : {
-                  ...member,
-                  expenses: [...member.expenses, currentMonthExpense],
-                },
-          );
+          member.name !== ownerName
+            ? member
+            : {
+                ...member,
+                expenses: [...member.expenses, currentMonthExpense],
+              }
+        )
       }
 
       await commitSnapshot({
         members: nextMembers,
         categories: snapshot.categories,
         regularExpenses: nextRegularExpenses,
-      });
+      })
 
-      setRegularEditorState(null);
-      return;
+      setRegularEditorState(null)
+      return
     }
 
     const nextRegularExpenses = snapshot.regularExpenses.map((template) => {
-        if (template.id !== previousTemplate.id) {
-          return template;
+      if (template.id !== previousTemplate.id) {
+        return template
+      }
+
+      const currentAmount = getRegularAmountForPeriod(
+        previousTemplate,
+        currentMonthContext.year,
+        currentMonthContext.monthName
+      )
+
+      let nextHistory = [...(template.history ?? [])]
+      if (updates.amount !== currentAmount) {
+        const nextPeriodKey = getPeriodOrderKey(
+          nextEffectiveContext.year,
+          nextEffectiveContext.monthName
+        )
+        const existingIndex = nextHistory.findIndex(
+          (entry) =>
+            getPeriodOrderKey(entry.effectiveYear, entry.effectiveMonth) ===
+            nextPeriodKey
+        )
+        const nextEntry = {
+          effectiveYear: nextEffectiveContext.year,
+          effectiveMonth: nextEffectiveContext.monthName,
+          amount: updates.amount,
+          previousAmount: currentAmount,
+          changedAt,
         }
 
-        const currentAmount = getRegularAmountForPeriod(
-          previousTemplate,
-          currentMonthContext.year,
-          currentMonthContext.monthName,
-        );
-
-        let nextHistory = [...(template.history ?? [])];
-        if (updates.amount !== currentAmount) {
-          const nextPeriodKey = getPeriodOrderKey(nextEffectiveContext.year, nextEffectiveContext.monthName);
-          const existingIndex = nextHistory.findIndex(
-            (entry) => getPeriodOrderKey(entry.effectiveYear, entry.effectiveMonth) === nextPeriodKey,
-          );
-          const nextEntry = {
-            effectiveYear: nextEffectiveContext.year,
-            effectiveMonth: nextEffectiveContext.monthName,
-            amount: updates.amount,
-            previousAmount: currentAmount,
-            changedAt,
-          };
-
-          if (existingIndex >= 0) {
-            nextHistory[existingIndex] = nextEntry;
-          } else {
-            nextHistory.push(nextEntry);
-          }
+        if (existingIndex >= 0) {
+          nextHistory[existingIndex] = nextEntry
+        } else {
+          nextHistory.push(nextEntry)
         }
+      }
 
-        return {
-          ...template,
-          title: updates.title,
-          category: updates.category,
-          cadence: updates.cadence,
-          frequency: updates.frequency,
-          dayOfMonth: updates.dayOfMonth,
-          month: updates.month,
-          owner: normalizedOwner,
-          payer: normalizedPayer,
-          stoppedFromYear: template.stoppedFromYear ?? null,
-          stoppedFromMonth: template.stoppedFromMonth ?? null,
-          history: nextHistory,
-        };
-      });
+      return {
+        ...template,
+        title: updates.title,
+        category: updates.category,
+        cadence: updates.cadence,
+        frequency: updates.frequency,
+        dayOfMonth: updates.dayOfMonth,
+        month: updates.month,
+        owner: normalizedOwner,
+        payer: normalizedPayer,
+        stoppedFromYear: template.stoppedFromYear ?? null,
+        stoppedFromMonth: template.stoppedFromMonth ?? null,
+        history: nextHistory,
+      }
+    })
 
     await commitSnapshot({
       members: snapshot.members,
       categories: snapshot.categories,
       regularExpenses: nextRegularExpenses,
-    });
+    })
 
-    setRegularEditorState(null);
-  };
+    setRegularEditorState(null)
+  }
 
   const handleStopRegularExpense = async (template, stopContext) => {
-    const snapshot = latestSnapshotRef.current;
+    const snapshot = latestSnapshotRef.current
     const nextRegularExpenses = snapshot.regularExpenses.map((item) =>
       item.id !== template.id
         ? item
@@ -9588,21 +11337,21 @@ export default function App() {
             ...item,
             stoppedFromYear: stopContext.year,
             stoppedFromMonth: stopContext.monthName,
-          },
-    );
+          }
+    )
 
     await commitSnapshot({
       members: snapshot.members,
       categories: snapshot.categories,
       regularExpenses: nextRegularExpenses,
-    });
+    })
 
-    setRegularStopState(null);
-    setSelectedRegularTemplate(null);
-  };
+    setRegularStopState(null)
+    setSelectedRegularTemplate(null)
+  }
 
   const handleResumeRegularExpense = async (template) => {
-    const snapshot = latestSnapshotRef.current;
+    const snapshot = latestSnapshotRef.current
     const nextRegularExpenses = snapshot.regularExpenses.map((item) =>
       item.id !== template.id
         ? item
@@ -9610,77 +11359,81 @@ export default function App() {
             ...item,
             stoppedFromYear: null,
             stoppedFromMonth: null,
-          },
-    );
+          }
+    )
 
     await commitSnapshot({
       members: snapshot.members,
       categories: snapshot.categories,
       regularExpenses: nextRegularExpenses,
-    });
+    })
 
-    setRegularStopState(null);
-    setSelectedRegularTemplate(null);
-  };
+    setRegularStopState(null)
+    setSelectedRegularTemplate(null)
+  }
 
   const handleRequestDeleteRegularExpense = (template) => {
     setRegularConfirmState({
       title: "Удалить шаблон регулярной траты?",
       description: `Шаблон "${template.title}" исчезнет из будущих месяцев. Уже созданный текущий месяц при этом не изменится.`,
       onConfirm: async () => {
-        const snapshot = latestSnapshotRef.current;
+        const snapshot = latestSnapshotRef.current
         await commitSnapshot({
           members: snapshot.members,
           categories: snapshot.categories,
-          regularExpenses: snapshot.regularExpenses.filter((item) => item.id !== template.id),
-        });
-        setRegularConfirmState(null);
+          regularExpenses: snapshot.regularExpenses.filter(
+            (item) => item.id !== template.id
+          ),
+        })
+        setRegularConfirmState(null)
       },
-    });
-  };
+    })
+  }
 
   const handleCreateRegularExpense = (defaults = null) => {
     setRegularEditorState({
       template: null,
       defaults,
-    });
-  };
+    })
+  }
 
   const handleOpenRegularTemplateDetails = (template) => {
-    setSelectedRegularTemplate(template);
-  };
+    setSelectedRegularTemplate(template)
+  }
 
   const handleOpenTemplateFromProjected = (templateId) => {
-    const matchedTemplate = regularExpenses.find((template) => template.id === templateId);
+    const matchedTemplate = regularExpenses.find(
+      (template) => template.id === templateId
+    )
     if (!matchedTemplate) {
-      return;
+      return
     }
 
-    setSelectedRegularTemplate(matchedTemplate);
-  };
+    setSelectedRegularTemplate(matchedTemplate)
+  }
 
   const handleOpenProjectedExpenseDetails = (expense) => {
     if (expense?.templateId) {
-      handleOpenTemplateFromProjected(expense.templateId);
-      return;
+      handleOpenTemplateFromProjected(expense.templateId)
+      return
     }
 
     if (!expense?.sourceMember) {
-      return;
+      return
     }
 
-    setSelectedExpense({ member: expense.sourceMember, expense });
-    setModalMode("details");
-  };
+    setSelectedExpense({ member: expense.sourceMember, expense })
+    setModalMode("details")
+  }
 
   const handleEditProjectedExpense = (expense) => {
     if (!expense?.sourceMember) {
-      return;
+      return
     }
 
-    setSelectedExpense({ member: expense.sourceMember, expense });
-    setModalMode("edit");
-  };
+    setSelectedExpense({ member: expense.sourceMember, expense })
+    setModalMode("edit")
+  }
 
   const handleCreateRegularExpenseFromGroup = (owner, frequency) => {
     handleCreateRegularExpense({
@@ -9688,46 +11441,56 @@ export default function App() {
       payer: owner === "Общее" ? "" : owner,
       frequency,
       month: nextMonthContext.monthShort,
-    });
-  };
+    })
+  }
 
   const handleOpenPeriodMonth = (month) => {
-    const monthContext = buildMonthContext(month.year, month.name);
+    const monthContext = buildMonthContext(month.year, month.name)
 
     if (month.isCurrent) {
-      setSelectedPeriodContext(null);
-      setCurrentScreen("month");
-      return;
+      setSelectedPeriodContext(null)
+      setCurrentScreen("month")
+      return
     }
 
-    setSelectedPeriodContext(monthContext);
-    setCurrentScreen("periodMonth");
-  };
+    setSelectedPeriodContext(monthContext)
+    setCurrentScreen("periodMonth")
+  }
 
   const handleOpenMonthContext = (monthContext) => {
-    const targetOrder = getPeriodOrderKey(monthContext.year, monthContext.monthName);
-    const currentOrder = getPeriodOrderKey(currentMonthContext.year, currentMonthContext.monthName);
-    const nextOrder = getPeriodOrderKey(nextMonthContext.year, nextMonthContext.monthName);
+    const targetOrder = getPeriodOrderKey(
+      monthContext.year,
+      monthContext.monthName
+    )
+    const currentOrder = getPeriodOrderKey(
+      currentMonthContext.year,
+      currentMonthContext.monthName
+    )
+    const nextOrder = getPeriodOrderKey(
+      nextMonthContext.year,
+      nextMonthContext.monthName
+    )
 
     if (targetOrder === currentOrder) {
-      setSelectedPeriodContext(null);
-      setCurrentScreen("month");
-      return;
+      setSelectedPeriodContext(null)
+      setCurrentScreen("month")
+      return
     }
 
     if (targetOrder === nextOrder) {
-      setSelectedPeriodContext(null);
-      setCurrentScreen("nextMonth");
-      return;
+      setSelectedPeriodContext(null)
+      setCurrentScreen("nextMonth")
+      return
     }
 
-    setSelectedPeriodContext(monthContext);
-    setCurrentScreen("periodMonth");
-  };
+    setSelectedPeriodContext(monthContext)
+    setCurrentScreen("periodMonth")
+  }
 
   return (
     <>
       <main
+        ref={appShellRef}
         className={
           selectedExpense ||
           selectedRegularTemplate ||
@@ -9741,54 +11504,51 @@ export default function App() {
             ? "app-shell modal-open"
             : "app-shell"
         }
+        style={appShellStyle}
       >
-        <div
-          className="mobile-hero"
-          style={mobileHeroImage ? { "--mobile-hero-image": `url(${mobileHeroImage})` } : undefined}
-        >
-          <div className="mobile-hero-status" aria-hidden="true">
-            <span className="mobile-hero-status-time">{mobileHeroClock}</span>
-            <div className="mobile-hero-status-icons">
-              <span className="mobile-hero-status-signal">
-                <span />
-                <span />
-                <span />
-                <span />
-              </span>
-              <span className="mobile-hero-status-wifi">
-                <span />
-                <span />
-                <span />
-              </span>
-              <span className="mobile-hero-status-battery">
-                <span className="mobile-hero-status-battery-level">77</span>
-                <span className="mobile-hero-status-battery-cap" />
-              </span>
-            </div>
-          </div>
-
-          <button
-            className="mobile-nav-toggle mobile-hero-toggle"
-            type="button"
-            aria-label={mobileNavOpen ? "Закрыть навигацию" : "Открыть навигацию"}
-            aria-expanded={mobileNavOpen}
-            onClick={() => setMobileNavOpen((current) => !current)}
+        {isLocalPreviewEnabled ? (
+          <div
+            className="preview-mode-indicator"
+            aria-label="Локальный preview активен: вход через Google и Supabase выключены только для этой dev-сессии."
+            title="Локальный preview активен: вход через Google и Supabase выключены только для этой dev-сессии."
           >
-            <img src={burgerIcon} alt="" aria-hidden="true" />
-          </button>
+            DEV
+          </div>
+        ) : null}
 
-          {mobileSwitcherMonthContext && mobileSwitcherPrevContext && mobileSwitcherNextContext ? (
+        <div
+          className="mobile-hero-backdrop"
+          style={
+            mobileHeroImage
+              ? { "--mobile-hero-image": `url(${mobileHeroImage})` }
+              : undefined
+          }
+          aria-hidden="true"
+        />
+        <div className="mobile-hero" />
+
+        {mobileSwitcherMonthContext &&
+        mobileSwitcherPrevContext &&
+        mobileSwitcherNextContext ? (
+          <div
+            ref={mobileMonthSwitcherDockRef}
+            className={
+              isMobileMonthSwitcherPinned
+                ? "mobile-month-switcher-dock is-pinned"
+                : "mobile-month-switcher-dock"
+            }
+          >
             <MobileMonthSwitcher
               previousMonth={mobileSwitcherPrevContext}
               nextMonth={mobileSwitcherNextContext}
               onOpenMonth={handleOpenMonthContext}
               onOpenAllMonths={() => {
-                setSelectedPeriodContext(null);
-                setCurrentScreen("months");
+                setSelectedPeriodContext(null)
+                setCurrentScreen("months")
               }}
             />
-          ) : null}
-        </div>
+          </div>
+        ) : null}
 
         <aside className="sidebar">
           <div className="brand-mark">
@@ -9798,7 +11558,6 @@ export default function App() {
           <NavigationMenu
             currentScreen={currentScreen}
             onNavigate={handleNavigate}
-            selectedPeriodContext={selectedPeriodContext}
           />
           {authSession ? (
             <SessionCard
@@ -9811,7 +11570,11 @@ export default function App() {
 
         <section
           ref={contentRef}
-          className={mobileSwitcherMonthContext ? "content content-with-month-switcher" : "content"}
+          className={
+            mobileSwitcherMonthContext
+              ? "content content-with-month-switcher"
+              : "content"
+          }
         >
           {currentScreen === "month" ? (
             <>
@@ -9819,8 +11582,8 @@ export default function App() {
                 <p className="eyebrow">Семейный бюджет</p>
                 <h1>Выполнение текущего месяца</h1>
                 <p className="page-note">
-                  Отмечайте обязательные траты чекбоксами, чтобы ничего не забыть и видеть реальный
-                  прогресс месяца.
+                  Отмечайте обязательные траты чекбоксами, чтобы ничего не
+                  забыть и видеть реальный прогресс месяца.
                 </p>
               </header>
 
@@ -9831,7 +11594,10 @@ export default function App() {
                   summary={currentMonthFinancialSummary}
                 />
 
-                <CategoryBreakdownCard items={categoryBreakdown} total={currentMonthTotals.budget} />
+                <CategoryBreakdownCard
+                  items={categoryBreakdown}
+                  total={currentMonthTotals.budget}
+                />
               </div>
 
               <div className="members-grid">
@@ -9844,18 +11610,20 @@ export default function App() {
                     onAddExpense={handleAddExpense}
                     onOpenExpense={(selectedMember, expense) => {
                       if (expense?.templateId) {
-                        const matchedTemplate = regularExpenses.find((template) => template.id === expense.templateId);
+                        const matchedTemplate = regularExpenses.find(
+                          (template) => template.id === expense.templateId
+                        )
                         if (matchedTemplate) {
-                          setSelectedRegularTemplate(matchedTemplate);
-                          return;
+                          setSelectedRegularTemplate(matchedTemplate)
+                          return
                         }
                       }
-                      setSelectedExpense({ member: selectedMember, expense });
-                      setModalMode("details");
+                      setSelectedExpense({ member: selectedMember, expense })
+                      setModalMode("details")
                     }}
                     onEditExpense={(selectedMember, expense) => {
-                      setSelectedExpense({ member: selectedMember, expense });
-                      setModalMode("edit");
+                      setSelectedExpense({ member: selectedMember, expense })
+                      setModalMode("edit")
                     }}
                   />
                 ))}
@@ -9866,7 +11634,9 @@ export default function App() {
           {currentScreen === "settings" ? (
             <SettingsScreen
               onOpenCategories={() => setCurrentScreen("categories")}
-              onOpenCashflowAccounts={() => setCurrentScreen("cashflowAccounts")}
+              onOpenCashflowAccounts={() =>
+                setCurrentScreen("cashflowAccounts")
+              }
               onOpenCashflowFunds={() => setCurrentScreen("cashflowFunds")}
               onRequestReset={() =>
                 setResetConfirmState({
@@ -9874,8 +11644,8 @@ export default function App() {
                   description:
                     "Мы удалим все текущие траты, будущие планы и регулярные шаблоны этого household. Категории вернутся к базовому набору, чтобы можно было сразу продолжать тестирование.",
                   onConfirm: async () => {
-                    await handleResetBudgetData();
-                    setResetConfirmState(null);
+                    await handleResetBudgetData()
+                    setResetConfirmState(null)
                   },
                 })
               }
@@ -9892,10 +11662,11 @@ export default function App() {
               onRequestDelete={(account) =>
                 setCategoryConfirmState({
                   title: `Удалить счёт "${account.name}"?`,
-                  description: "Счёт будет удалён из справочника потоков денег, если он нигде не используется.",
+                  description:
+                    "Счёт будет удалён из справочника потоков денег, если он нигде не используется.",
                   onConfirm: async () => {
-                    await handleDeleteCashflowAccount(account);
-                    setCategoryConfirmState(null);
+                    await handleDeleteCashflowAccount(account)
+                    setCategoryConfirmState(null)
                   },
                 })
               }
@@ -9912,10 +11683,11 @@ export default function App() {
               onRequestDelete={(fund) =>
                 setCategoryConfirmState({
                   title: `Удалить фонд "${fund.name}"?`,
-                  description: "Фонд будет удалён из справочника потоков денег, если он нигде не используется.",
+                  description:
+                    "Фонд будет удалён из справочника потоков денег, если он нигде не используется.",
                   onConfirm: async () => {
-                    await handleDeleteCashflowFund(fund);
-                    setCategoryConfirmState(null);
+                    await handleDeleteCashflowFund(fund)
+                    setCategoryConfirmState(null)
                   },
                 })
               }
@@ -9949,16 +11721,22 @@ export default function App() {
                 {
                   label: "Бюджет",
                   onClick: () => {
-                    setSelectedPeriodContext(null);
-                    setCurrentScreen("months");
+                    setSelectedPeriodContext(null)
+                    setCurrentScreen("months")
                   },
                 },
                 {
-                  label: formatMonthYearLabel(selectedPeriodContext.monthName, selectedPeriodContext.year),
+                  label: formatMonthYearLabel(
+                    selectedPeriodContext.monthName,
+                    selectedPeriodContext.year
+                  ),
                   current: true,
                 },
               ]}
-              monthLabel={formatMonthYearLabel(selectedPeriodContext.monthName, selectedPeriodContext.year)}
+              monthLabel={formatMonthYearLabel(
+                selectedPeriodContext.monthName,
+                selectedPeriodContext.year
+              )}
               monthMeta={getMonthMetaByName(selectedPeriodContext.monthName)}
               financialSummary={selectedPeriodFinancialSummary}
               categoryBreakdown={selectedPeriodCategoryBreakdown}
@@ -9997,12 +11775,15 @@ export default function App() {
               onCreateExpense={handleCreateExpenseFromBudgetHub}
               onOpenCurrentMonth={() => setCurrentScreen("month")}
               onOpenNextMonth={() => {
-                setSelectedPeriodContext(null);
-                setCurrentScreen("nextMonth");
+                setSelectedPeriodContext(null)
+                setCurrentScreen("nextMonth")
               }}
               onOpenRegular={() => setCurrentScreen("regular")}
               onOpenMonth={handleOpenPeriodMonth}
-              currentMonthLabel={(monthNamesGenitive[currentMonthContext.monthIndex] ?? currentMonthContext.monthName).toUpperCase()}
+              currentMonthLabel={(
+                monthNamesGenitive[currentMonthContext.monthIndex] ??
+                currentMonthContext.monthName
+              ).toUpperCase()}
               currentMonthMeta={currentMonthMeta}
               nextMonthLabel={nextMonthContext.monthName}
               nextMonthMeta={nextMonthMeta}
@@ -10057,17 +11838,23 @@ export default function App() {
               incomeEvents={cashflowIncomeEvents}
               errorMessage={cashflowError}
               onAddSnapshot={() => setSnapshotEditorState({})}
-              onOpenSnapshot={(snapshot) => setSelectedCashflowSnapshot(snapshot)}
+              onOpenSnapshot={(snapshot) =>
+                setSelectedCashflowSnapshot(snapshot)
+              }
               onOpenBudgetReserveConfig={() => {
-                const reserveFund = cashflowFunds.find((fund) => fund.fundType === "budget_reserve");
+                const reserveFund = cashflowFunds.find(
+                  (fund) => fund.fundType === "budget_reserve"
+                )
                 if (reserveFund) {
-                  setCashflowReserveEditorState(reserveFund);
+                  setCashflowReserveEditorState(reserveFund)
                 }
               }}
               onOpenEmergencyReserveConfig={() => {
-                const reserveFund = cashflowFunds.find((fund) => fund.fundType === "emergency_reserve");
+                const reserveFund = cashflowFunds.find(
+                  (fund) => fund.fundType === "emergency_reserve"
+                )
                 if (reserveFund) {
-                  setCashflowReserveEditorState(reserveFund);
+                  setCashflowReserveEditorState(reserveFund)
                 }
               }}
               onRecalculate={reloadCashflowState}
@@ -10080,51 +11867,22 @@ export default function App() {
               members={members}
               regularExpenses={regularExpenses}
               onBackToSettings={() => setCurrentScreen("settings")}
-              onOpenCreate={() => setCategoryEditorState({ mode: "create", category: null })}
-              onOpenEdit={(category) => setCategoryEditorState({ mode: "edit", category })}
+              onOpenCreate={() =>
+                setCategoryEditorState({ mode: "create", category: null })
+              }
+              onOpenEdit={(category) =>
+                setCategoryEditorState({ mode: "edit", category })
+              }
               onRequestDelete={handleRequestDeleteCategory}
             />
           ) : null}
         </section>
       </main>
 
-      <div
-        className={mobileNavOpen ? "mobile-nav-overlay open" : "mobile-nav-overlay"}
-        onClick={() => setMobileNavOpen(false)}
-        aria-hidden={mobileNavOpen ? "false" : "true"}
-      >
-        <div
-          className="mobile-nav-sheet"
-          onClick={(event) => event.stopPropagation()}
-        >
-          <div className="mobile-nav-head">
-            <div className="brand-mark mobile-nav-brand">
-              <span className="brand-accent" />
-              Family Budget
-            </div>
-            <button
-              className="mobile-nav-close"
-              type="button"
-              aria-label="Закрыть навигацию"
-              onClick={() => setMobileNavOpen(false)}
-            >
-              ×
-            </button>
-          </div>
-          <NavigationMenu
-            currentScreen={currentScreen}
-            onNavigate={handleNavigate}
-            selectedPeriodContext={selectedPeriodContext}
-          />
-          {authSession ? (
-            <SessionCard
-              user={authUser}
-              onSignOut={handleSignOut}
-              isPending={authPending}
-            />
-          ) : null}
-        </div>
-      </div>
+      <MobileFooterNav
+        currentScreen={currentScreen}
+        onNavigate={handleMobileFooterNavigate}
+      />
 
       {selectedExpense ? (
         modalMode === "details" ? (
@@ -10141,8 +11899,8 @@ export default function App() {
             categories={categories}
             onSave={handleSaveExpense}
             onClose={() => {
-              setSelectedExpense(null);
-              setModalMode("details");
+              setSelectedExpense(null)
+              setModalMode("details")
             }}
           />
         )
@@ -10162,19 +11920,19 @@ export default function App() {
           categories={categories}
           onClose={() => setSelectedRegularTemplate(null)}
           onEdit={() => {
-            setRegularEditorState({ template: selectedRegularTemplate });
-            setSelectedRegularTemplate(null);
+            setRegularEditorState({ template: selectedRegularTemplate })
+            setSelectedRegularTemplate(null)
           }}
           onDelete={() => {
-            handleRequestDeleteRegularExpense(selectedRegularTemplate);
-            setSelectedRegularTemplate(null);
+            handleRequestDeleteRegularExpense(selectedRegularTemplate)
+            setSelectedRegularTemplate(null)
           }}
           onStop={() => {
-            setRegularStopState({ template: selectedRegularTemplate });
-            setSelectedRegularTemplate(null);
+            setRegularStopState({ template: selectedRegularTemplate })
+            setSelectedRegularTemplate(null)
           }}
           onResume={() => {
-            void handleResumeRegularExpense(selectedRegularTemplate);
+            void handleResumeRegularExpense(selectedRegularTemplate)
           }}
         />
       ) : null}
@@ -10183,6 +11941,7 @@ export default function App() {
         <CategoryEditorModal
           category={categoryEditorState.category}
           members={members}
+          regularExpenses={regularExpenses}
           categoriesCount={categories.length}
           onClose={() => setCategoryEditorState(null)}
           onSave={handleSaveCategory}
@@ -10276,10 +12035,12 @@ export default function App() {
           funds={cashflowFunds}
           onClose={() => setSelectedCashflowSnapshot(null)}
           onEdit={() => {
-            setSnapshotEditorState(selectedCashflowSnapshot);
-            setSelectedCashflowSnapshot(null);
+            setSnapshotEditorState(selectedCashflowSnapshot)
+            setSelectedCashflowSnapshot(null)
           }}
-          onDelete={() => handleDeleteCashflowSnapshot(selectedCashflowSnapshot)}
+          onDelete={() =>
+            handleDeleteCashflowSnapshot(selectedCashflowSnapshot)
+          }
         />
       ) : null}
 
@@ -10295,7 +12056,9 @@ export default function App() {
 
       {cashflowAccountEditorState ? (
         <CashflowAccountEditorModal
-          account={cashflowAccountEditorState.id ? cashflowAccountEditorState : null}
+          account={
+            cashflowAccountEditorState.id ? cashflowAccountEditorState : null
+          }
           onClose={() => setCashflowAccountEditorState(null)}
           onSave={handleSaveCashflowAccount}
         />
@@ -10311,11 +12074,15 @@ export default function App() {
 
       {cashflowReserveEditorState ? (
         <CashflowReserveTargetModal
-          fund={cashflowFunds.find((fund) => fund.id === cashflowReserveEditorState.id) ?? cashflowReserveEditorState}
+          fund={
+            cashflowFunds.find(
+              (fund) => fund.id === cashflowReserveEditorState.id
+            ) ?? cashflowReserveEditorState
+          }
           onClose={() => setCashflowReserveEditorState(null)}
           onSave={handleSaveCashflowReserveFund}
         />
       ) : null}
     </>
-  );
+  )
 }

@@ -1,13 +1,6 @@
-const { Client } = require("pg");
+const { createSupabaseClient } = require("./lib/db.cjs")
 
-const client = new Client({
-  host: "aws-0-eu-west-1.pooler.supabase.com",
-  port: 5432,
-  user: "postgres.qlsouerrwwyqjmuicxxr",
-  password: "zingom-1zamfi-wefFoc",
-  database: "postgres",
-  ssl: { rejectUnauthorized: false },
-});
+const client = createSupabaseClient()
 
 const queries = {
   users: "select id, email from auth.users order by created_at",
@@ -45,22 +38,22 @@ const queries = {
     order by created_at desc
     limit 20
   `,
-};
+}
 
-(async () => {
-  await client.connect();
+;(async () => {
+  await client.connect()
 
   for (const [name, sql] of Object.entries(queries)) {
-    const { rows } = await client.query(sql);
-    console.log(`---${name}---`);
-    console.log(JSON.stringify(rows, null, 2));
+    const { rows } = await client.query(sql)
+    console.log(`---${name}---`)
+    console.log(JSON.stringify(rows, null, 2))
   }
 
-  await client.end();
+  await client.end()
 })().catch(async (error) => {
-  console.error(error);
+  console.error(error)
   try {
-    await client.end();
+    await client.end()
   } catch {}
-  process.exit(1);
-});
+  process.exit(1)
+})
