@@ -2535,6 +2535,32 @@ function getLatestSnapshotForMonth({
   return matchedSnapshot
 }
 
+function getLatestEarlierSnapshot({
+  snapshots,
+  matchSnapshot,
+  beforeSnapshot,
+}) {
+  const currentSnapshotTime = new Date(beforeSnapshot.snapshotDate).getTime()
+  let matchedSnapshot = null
+
+  snapshots.forEach((candidate) => {
+    if (!matchSnapshot(candidate)) {
+      return
+    }
+
+    const candidateTime = new Date(candidate.snapshotDate).getTime()
+    if (candidateTime >= currentSnapshotTime) {
+      return
+    }
+
+    if (isSnapshotNewer(candidate, matchedSnapshot)) {
+      matchedSnapshot = candidate
+    }
+  })
+
+  return matchedSnapshot
+}
+
 function getPreviousMonthSnapshotForBalance({ snapshot, snapshots }) {
   const previousMonthOrder =
     getCashflowSnapshotMonthOrder(snapshot.snapshotDate) - 1
@@ -2551,9 +2577,29 @@ function getPreviousMonthSnapshotForBalance({ snapshot, snapshots }) {
     return exactPreviousSnapshot
   }
 
-  return getLatestSnapshotForMonth({
+  const previousStorageSnapshot = getLatestSnapshotForMonth({
     snapshots,
     monthOrder: previousMonthOrder,
+    matchSnapshot: (candidate) =>
+      getCashflowSnapshotStorageKey(candidate) === storageKey,
+  })
+  if (previousStorageSnapshot) {
+    return previousStorageSnapshot
+  }
+
+  const exactEarlierSnapshot = getLatestEarlierSnapshot({
+    snapshots,
+    beforeSnapshot: snapshot,
+    matchSnapshot: (candidate) =>
+      getCashflowSnapshotBalanceKey(candidate) === balanceKey,
+  })
+  if (exactEarlierSnapshot) {
+    return exactEarlierSnapshot
+  }
+
+  return getLatestEarlierSnapshot({
+    snapshots,
+    beforeSnapshot: snapshot,
     matchSnapshot: (candidate) =>
       getCashflowSnapshotStorageKey(candidate) === storageKey,
   })
