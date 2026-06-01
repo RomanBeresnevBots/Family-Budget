@@ -7897,23 +7897,31 @@ function CashflowSnapshotRow({ snapshot, onClick }) {
       </div>
       <div className="cashflow-detail-value cashflow-snapshot-value">
         <div className="cashflow-snapshot-change-line">
-          {change ? (
-            <span
-              className={[
-                "cashflow-snapshot-change",
-                isPositiveChange ? "positive" : "negative",
-              ]
-                .filter(Boolean)
-                .join(" ")}
-            >
-              <strong>
-                {isPositiveChange ? "▲" : "▼"}{" "}
-                {formatCurrency(Math.abs(change.delta))} Kč
-              </strong>
-              {change.percent !== null ? <span>({change.percent}%)</span> : null}
-            </span>
-          ) : null}
-          <strong>{formatCurrency(snapshot.amountCzk)} Kč</strong>
+          <div className="cashflow-snapshot-change-slot">
+            {change ? (
+              <span
+                className={[
+                  "cashflow-snapshot-change",
+                  isPositiveChange ? "positive" : "negative",
+                ]
+                  .filter(Boolean)
+                  .join(" ")}
+              >
+                <span className="cashflow-snapshot-change-icon" aria-hidden="true">
+                  {isPositiveChange ? "↗" : "↘"}
+                </span>
+                <span className="cashflow-snapshot-change-copy">
+                  <strong>{formatCurrency(Math.abs(change.delta))} Kč</strong>
+                  {change.percent !== null ? (
+                    <span>({change.percent}%)</span>
+                  ) : null}
+                </span>
+              </span>
+            ) : null}
+          </div>
+          <strong className="cashflow-snapshot-amount">
+            {formatCurrency(snapshot.amountCzk)} Kč
+          </strong>
         </div>
         <span>{formatSqlDateHuman(snapshot.snapshotDate)}</span>
       </div>

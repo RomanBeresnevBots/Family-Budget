@@ -3480,28 +3480,68 @@ textarea {
 }
 
 .cashflow-snapshot-change-line {
+  display: grid;
+  grid-template-columns: minmax(216px, max-content) auto;
+  align-items: center;
+  justify-content: end;
+  column-gap: 22px;
+}
+
+.cashflow-snapshot-change-slot {
   display: flex;
-  align-items: baseline;
   justify-content: flex-end;
-  gap: 18px;
+  min-height: 40px;
 }
 
 .cashflow-snapshot-change {
   display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  font-size: 1.02rem;
+  font-weight: 800;
+  line-height: 1;
+  white-space: nowrap;
+  letter-spacing: -0.02em;
+}
+
+.cashflow-snapshot-change-icon {
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  font-size: 0.92rem;
+  font-weight: 900;
+  line-height: 1;
+  flex-shrink: 0;
+}
+
+.cashflow-snapshot-change-copy {
+  display: inline-flex;
   align-items: baseline;
   gap: 6px;
-  font-size: var(--text-small);
-  font-weight: 800;
-  line-height: 1.1;
-  white-space: nowrap;
 }
 
 .cashflow-snapshot-change.positive {
-  color: #3cad67;
+  color: #37a968;
+}
+
+.cashflow-snapshot-change.positive .cashflow-snapshot-change-icon {
+  color: #ffffff;
+  background: linear-gradient(180deg, #62c488 0%, #3ea66d 100%);
+  box-shadow: 0 8px 16px rgba(62, 166, 109, 0.22);
 }
 
 .cashflow-snapshot-change.negative {
-  color: #e57c7d;
+  color: #db7270;
+}
+
+.cashflow-snapshot-change.negative .cashflow-snapshot-change-icon {
+  color: #ffffff;
+  background: linear-gradient(180deg, #f29a96 0%, #dd7470 100%);
+  box-shadow: 0 8px 16px rgba(221, 116, 112, 0.22);
 }
 
 .cashflow-snapshot-change strong,
@@ -3511,13 +3551,14 @@ textarea {
   font-weight: inherit;
 }
 
-.cashflow-snapshot-value strong {
+.cashflow-snapshot-amount {
   color: var(--ink-strong);
   font-size: 1.02rem;
   font-weight: 800;
+  min-width: 0;
 }
 
-.cashflow-snapshot-value span {
+.cashflow-snapshot-value > span {
   color: var(--ink-soft);
   font-size: var(--text-micro);
   font-weight: 700;
@@ -3690,9 +3731,19 @@ textarea {
   }
 
   .cashflow-snapshot-change-line {
+    grid-template-columns: minmax(0, 1fr) auto;
+    width: 100%;
+    justify-content: stretch;
+    column-gap: 16px;
+  }
+
+  .cashflow-snapshot-change-slot {
     justify-content: flex-start;
-    flex-wrap: wrap;
-    gap: 8px 14px;
+    min-height: 36px;
+  }
+
+  .cashflow-snapshot-change {
+    justify-content: flex-start;
   }
 
   .settings-section-head,
