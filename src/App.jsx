@@ -2630,6 +2630,25 @@ function getCashflowSnapshotMonthChange({ snapshot, snapshots }) {
   }
 }
 
+function isSameCashflowSnapshotPayload(leftSnapshot, rightSnapshot) {
+  if (!leftSnapshot || !rightSnapshot) {
+    return false
+  }
+
+  return (
+    leftSnapshot.accountId === rightSnapshot.accountId &&
+    leftSnapshot.fundId === rightSnapshot.fundId &&
+    leftSnapshot.snapshotDate === rightSnapshot.snapshotDate &&
+    Number(leftSnapshot.amount ?? 0) === Number(rightSnapshot.amount ?? 0) &&
+    leftSnapshot.currency === rightSnapshot.currency &&
+    Number(leftSnapshot.amountCzk ?? 0) === Number(rightSnapshot.amountCzk ?? 0) &&
+    Number(leftSnapshot.exchangeRateToCzk ?? 1) ===
+      Number(rightSnapshot.exchangeRateToCzk ?? 1) &&
+    leftSnapshot.assetType === rightSnapshot.assetType &&
+    leftSnapshot.owner === rightSnapshot.owner
+  )
+}
+
 function getCurrentBalanceEntries({ snapshots, fundId = null }) {
   const latestByBalance = new Map()
 
@@ -10720,19 +10739,42 @@ export default function App() {
 
   const handleSaveCashflowSnapshot = async (snapshotDraft, accountDraft) => {
     const normalizedSnapshot = normalizeCashflowSnapshot(snapshotDraft)
+    const existingSnapshot = normalizedSnapshot.id
+      ? cashflowSnapshots.find((snapshot) => snapshot.id === normalizedSnapshot.id)
+      : null
+    const hasSnapshotChanges = existingSnapshot
+      ? !isSameCashflowSnapshotPayload(existingSnapshot, normalizedSnapshot)
+      : true
+
+    if (existingSnapshot && !hasSnapshotChanges) {
+      setSnapshotEditorState(null)
+      return
+    }
+
+    const versionedSnapshot =
+      existingSnapshot && hasSnapshotChanges
+        ? {
+            ...normalizedSnapshot,
+            id: null,
+            snapshotDate:
+              normalizedSnapshot.snapshotDate === existingSnapshot.snapshotDate
+                ? getTodaySqlDate()
+                : normalizedSnapshot.snapshotDate,
+          }
+        : normalizedSnapshot
 
     if (!shouldUseSupabase || !supabaseHouseholdId) {
       const nextAccount = accountDraft?.name?.trim()
         ? normalizeCashflowAccount({
             id:
-              normalizedSnapshot.accountId || `cashflow-account-${Date.now()}`,
+              versionedSnapshot.accountId || `cashflow-account-${Date.now()}`,
             name: accountDraft.name.trim(),
             owner: accountDraft.owner,
             accountType: accountDraft.accountType,
             defaultCurrency: accountDraft.defaultCurrency,
           })
         : null
-      const accountId = nextAccount?.id || normalizedSnapshot.accountId || ""
+      const accountId = nextAccount?.id || versionedSnapshot.accountId || ""
       setCashflowState((current) =>
         normalizeCashflowState({
           ...current,
@@ -10745,13 +10787,13 @@ export default function App() {
             : current.accounts,
           snapshots: [
             {
-              ...normalizedSnapshot,
-              id: normalizedSnapshot.id || `cashflow-snapshot-${Date.now()}`,
+              ...versionedSnapshot,
+              id:
+                versionedSnapshot.id ||
+                `cashflow-snapshot-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
               accountId,
             },
-            ...current.snapshots.filter(
-              (item) => item.id !== normalizedSnapshot.id
-            ),
+            ...current.snapshots,
           ],
         })
       )
@@ -10761,7 +10803,7 @@ export default function App() {
 
     await saveCashflowSnapshotToSupabase({
       householdId: supabaseHouseholdId,
-      snapshot: normalizedSnapshot,
+      snapshot: versionedSnapshot,
       accountDraft,
       existingAccounts: cashflowAccounts,
     })
