@@ -7895,34 +7895,35 @@ function CashflowSnapshotRow({ snapshot, onClick }) {
         <strong>{snapshot.accountName}</strong>
         <span>{`${snapshot.fundName} · ${snapshot.assetTypeLabel}`}</span>
       </div>
+      <div className="cashflow-snapshot-change-slot">
+        {change ? (
+          <span
+            className={[
+              "cashflow-snapshot-change",
+              isPositiveChange ? "positive" : "negative",
+            ]
+              .filter(Boolean)
+              .join(" ")}
+          >
+            <span className="cashflow-snapshot-change-icon" aria-hidden="true">
+              <svg viewBox="0 0 24 22" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <path
+                  d="M10.2226 2.74576C11.0164 1.41808 12.9836 1.41808 13.7774 2.74576L22.2234 16.8729C23.0395 18.2377 22.0562 19.9655 20.4459 19.9655H3.55409C1.94379 19.9655 0.960491 18.2377 1.77658 16.8729L10.2226 2.74576Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </span>
+            <span className="cashflow-snapshot-change-copy">
+              <strong>{formatCurrency(Math.abs(change.delta))} Kč</strong>
+              {change.percent !== null ? <span>({change.percent}%)</span> : null}
+            </span>
+          </span>
+        ) : null}
+      </div>
       <div className="cashflow-detail-value cashflow-snapshot-value">
-        <div className="cashflow-snapshot-change-line">
-          <div className="cashflow-snapshot-change-slot">
-            {change ? (
-              <span
-                className={[
-                  "cashflow-snapshot-change",
-                  isPositiveChange ? "positive" : "negative",
-                ]
-                  .filter(Boolean)
-                  .join(" ")}
-              >
-                <span className="cashflow-snapshot-change-icon" aria-hidden="true">
-                  {isPositiveChange ? "↗" : "↘"}
-                </span>
-                <span className="cashflow-snapshot-change-copy">
-                  <strong>{formatCurrency(Math.abs(change.delta))} Kč</strong>
-                  {change.percent !== null ? (
-                    <span>({change.percent}%)</span>
-                  ) : null}
-                </span>
-              </span>
-            ) : null}
-          </div>
-          <strong className="cashflow-snapshot-amount">
-            {formatCurrency(snapshot.amountCzk)} Kč
-          </strong>
-        </div>
+        <strong className="cashflow-snapshot-amount">
+          {formatCurrency(snapshot.amountCzk)} Kč
+        </strong>
         <span>{formatSqlDateHuman(snapshot.snapshotDate)}</span>
       </div>
     </div>
