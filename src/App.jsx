@@ -2498,6 +2498,10 @@ function getCashflowSnapshotBalanceKey(snapshot) {
   return `${snapshot.accountId}|${snapshot.fundId}|${snapshot.assetType}`
 }
 
+function getCashflowSnapshotStorageKey(snapshot) {
+  return `${snapshot.accountId}|${snapshot.fundId}`
+}
+
 function getCashflowSnapshotMonthOrder(snapshotDate) {
   const { year, month } = parseSqlDateParts(snapshotDate)
   if (!year || !month) {
@@ -2507,29 +2511,52 @@ function getCashflowSnapshotMonthOrder(snapshotDate) {
   return year * 12 + (month - 1)
 }
 
+function getLatestSnapshotForMonth({
+  snapshots,
+  matchSnapshot,
+  monthOrder,
+}) {
+  let matchedSnapshot = null
+
+  snapshots.forEach((candidate) => {
+    if (!matchSnapshot(candidate)) {
+      return
+    }
+
+    if (getCashflowSnapshotMonthOrder(candidate.snapshotDate) !== monthOrder) {
+      return
+    }
+
+    if (isSnapshotNewer(candidate, matchedSnapshot)) {
+      matchedSnapshot = candidate
+    }
+  })
+
+  return matchedSnapshot
+}
+
 function getPreviousMonthSnapshotForBalance({ snapshot, snapshots }) {
   const previousMonthOrder =
     getCashflowSnapshotMonthOrder(snapshot.snapshotDate) - 1
   const balanceKey = getCashflowSnapshotBalanceKey(snapshot)
-  let previousSnapshot = null
+  const storageKey = getCashflowSnapshotStorageKey(snapshot)
 
-  snapshots.forEach((candidate) => {
-    if (getCashflowSnapshotBalanceKey(candidate) !== balanceKey) {
-      return
-    }
-
-    if (
-      getCashflowSnapshotMonthOrder(candidate.snapshotDate) !== previousMonthOrder
-    ) {
-      return
-    }
-
-    if (isSnapshotNewer(candidate, previousSnapshot)) {
-      previousSnapshot = candidate
-    }
+  const exactPreviousSnapshot = getLatestSnapshotForMonth({
+    snapshots,
+    monthOrder: previousMonthOrder,
+    matchSnapshot: (candidate) =>
+      getCashflowSnapshotBalanceKey(candidate) === balanceKey,
   })
+  if (exactPreviousSnapshot) {
+    return exactPreviousSnapshot
+  }
 
-  return previousSnapshot
+  return getLatestSnapshotForMonth({
+    snapshots,
+    monthOrder: previousMonthOrder,
+    matchSnapshot: (candidate) =>
+      getCashflowSnapshotStorageKey(candidate) === storageKey,
+  })
 }
 
 function getCashflowSnapshotMonthChange({ snapshot, snapshots }) {
