@@ -368,6 +368,7 @@ export function useBudgetInsights({
   ])
 
   const yearCards = useMemo(() => {
+    const nextYear = currentMonthContext.year + 1
     const currentOrder = getPeriodOrderKey(
       currentMonthContext.year,
       currentMonthContext.monthName
@@ -427,22 +428,35 @@ export function useBudgetInsights({
       })
     })
 
-    return trackedYears.map((year) => {
-      const months = [...fullMonthNames]
-        .reverse()
-        .map((monthName) => {
-          const month = aggregates.get(year)?.[monthName]
-          return month ? { ...month, year } : null
-        })
-        .filter(Boolean)
+    return trackedYears
+      .map((year) => {
+        const months = [...fullMonthNames]
+          .reverse()
+          .map((monthName) => {
+            const month = aggregates.get(year)?.[monthName]
+            return month ? { ...month, year } : null
+          })
+          .filter(Boolean)
 
-      return {
-        year,
-        budget: months.reduce((sum, month) => sum + month.budget, 0),
-        paid: months.reduce((sum, month) => sum + month.paid, 0),
-        months,
-      }
-    })
+        const budget = months.reduce((sum, month) => sum + month.budget, 0)
+        const paid = months.reduce((sum, month) => sum + month.paid, 0)
+        const hasAnyData = months.some((month) => month.hasData)
+
+        return {
+          year,
+          budget,
+          paid,
+          months,
+          hasAnyData,
+        }
+      })
+      .filter(
+        (yearCard) =>
+          yearCard.year === nextYear ||
+          yearCard.year === currentMonthContext.year ||
+          yearCard.hasAnyData
+      )
+      .map(({ hasAnyData, ...yearCard }) => yearCard)
   }, [
     buildCombinedMonthExpenses,
     buildMonthContext,

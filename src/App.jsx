@@ -40,6 +40,7 @@ import julyBackground from "./assets/month-backgrounds/july.png"
 import juneBackground from "./assets/month-backgrounds/june.png"
 import marchBackground from "./assets/month-backgrounds/march.png"
 import mayBackground from "./assets/month-backgrounds/may.png"
+import myBudjetLogo from "./assets/my-budjet-logo.png"
 import novemberBackground from "./assets/month-backgrounds/november.png"
 import octoberBackground from "./assets/month-backgrounds/october.png"
 import septemberBackground from "./assets/month-backgrounds/september.png"
@@ -1015,15 +1016,20 @@ function createDefaultCategories() {
   )
 }
 
+function getPinnedTrackedYears(currentYear, years = []) {
+  return [...new Set([currentYear + 1, currentYear, ...years])].sort(
+    (left, right) => right - left
+  )
+}
+
 function getDefaultTrackedYears(currentYear = getCurrentMonthContext().year) {
-  return [currentYear, currentYear - 1, currentYear - 2]
+  return getPinnedTrackedYears(currentYear)
 }
 
 function getDefaultExpandedYears(currentYear = getCurrentMonthContext().year) {
   return {
+    [currentYear + 1]: false,
     [currentYear]: true,
-    [currentYear - 1]: false,
-    [currentYear - 2]: false,
   }
 }
 
@@ -1048,7 +1054,9 @@ function getInitialTrackedYears() {
     const normalized = [
       ...new Set(parsed.map((value) => Number(value)).filter(Number.isFinite)),
     ].sort((left, right) => right - left)
-    return normalized.length ? normalized : [currentYear]
+    return normalized.length
+      ? getPinnedTrackedYears(currentYear, normalized)
+      : getDefaultTrackedYears(currentYear)
   } catch {
     return getDefaultTrackedYears(currentYear)
   }
@@ -1056,6 +1064,7 @@ function getInitialTrackedYears() {
 
 function getInitialExpandedYears(trackedYears) {
   const currentYear = getCurrentMonthContext().year
+  const nextYear = currentYear + 1
   const fallbackYears = trackedYears.length ? trackedYears : [currentYear]
 
   if (typeof window === "undefined") {
@@ -1066,27 +1075,39 @@ function getInitialExpandedYears(trackedYears) {
     const savedValue = window.localStorage.getItem(EXPANDED_YEARS_STORAGE_KEY)
     if (!savedValue) {
       return Object.fromEntries(
-        fallbackYears.map((year, index) => [year, index === 0])
+        fallbackYears.map((year) => [
+          year,
+          year === currentYear ? true : year === nextYear ? false : false,
+        ])
       )
     }
 
     const parsed = JSON.parse(savedValue)
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
       return Object.fromEntries(
-        fallbackYears.map((year, index) => [year, index === 0])
+        fallbackYears.map((year) => [
+          year,
+          year === currentYear ? true : year === nextYear ? false : false,
+        ])
       )
     }
 
     return Object.fromEntries(
-      fallbackYears.map((year, index) => [
+      fallbackYears.map((year) => [
         year,
-        Boolean(parsed[year]) ||
-          (!Object.prototype.hasOwnProperty.call(parsed, year) && index === 0),
+        year === nextYear
+          ? false
+          : Object.prototype.hasOwnProperty.call(parsed, year)
+            ? Boolean(parsed[year])
+            : year === currentYear,
       ])
     )
   } catch {
     return Object.fromEntries(
-      fallbackYears.map((year, index) => [year, index === 0])
+      fallbackYears.map((year) => [
+        year,
+        year === currentYear ? true : year === nextYear ? false : false,
+      ])
     )
   }
 }
@@ -1115,6 +1136,13 @@ function getCashflowSystemFundLabel(fundType) {
 
 function getCashflowFundIcon(fundType) {
   return cashflowFundTypeMeta[fundType]?.icon ?? "💼"
+}
+
+function getCashflowAssetTypeLabel(assetType) {
+  return (
+    cashflowAssetTypeOptions.find((option) => option.value === assetType)
+      ?.label ?? assetType
+  )
 }
 
 function getCashflowOwnerLabel(owner) {
@@ -2054,6 +2082,14 @@ function buildProjectedExpenseFromTemplate(template, monthContext) {
     title: template.title,
     category: template.category,
     amount,
+    effectiveChangeNote:
+      effectiveChange && effectiveChange.previousAmount !== effectiveChange.amount
+        ? {
+            effectiveMonth: monthContext.monthName,
+            effectiveYear: monthContext.year,
+            previousAmount: effectiveChange.previousAmount,
+          }
+        : null,
     dueLabel: buildDueLabel({
       frequency: template.frequency,
       dayOfMonth: template.dayOfMonth,
@@ -2458,13 +2494,76 @@ function isSnapshotNewer(candidate, existing) {
   return String(candidate.id) > String(existing.id)
 }
 
+function getCashflowSnapshotBalanceKey(snapshot) {
+  return `${snapshot.accountId}|${snapshot.fundId}|${snapshot.assetType}`
+}
+
+function getCashflowSnapshotMonthOrder(snapshotDate) {
+  const { year, month } = parseSqlDateParts(snapshotDate)
+  if (!year || !month) {
+    return Number.NEGATIVE_INFINITY
+  }
+
+  return year * 12 + (month - 1)
+}
+
+function getPreviousMonthSnapshotForBalance({ snapshot, snapshots }) {
+  const previousMonthOrder =
+    getCashflowSnapshotMonthOrder(snapshot.snapshotDate) - 1
+  const balanceKey = getCashflowSnapshotBalanceKey(snapshot)
+  let previousSnapshot = null
+
+  snapshots.forEach((candidate) => {
+    if (getCashflowSnapshotBalanceKey(candidate) !== balanceKey) {
+      return
+    }
+
+    if (
+      getCashflowSnapshotMonthOrder(candidate.snapshotDate) !== previousMonthOrder
+    ) {
+      return
+    }
+
+    if (isSnapshotNewer(candidate, previousSnapshot)) {
+      previousSnapshot = candidate
+    }
+  })
+
+  return previousSnapshot
+}
+
+function getCashflowSnapshotMonthChange({ snapshot, snapshots }) {
+  const previousSnapshot = getPreviousMonthSnapshotForBalance({
+    snapshot,
+    snapshots,
+  })
+  if (!previousSnapshot) {
+    return null
+  }
+
+  const currentAmount = Number(snapshot.amountCzk ?? 0)
+  const previousAmount = Number(previousSnapshot.amountCzk ?? 0)
+  const delta = currentAmount - previousAmount
+  if (delta === 0) {
+    return null
+  }
+
+  return {
+    delta,
+    percent:
+      previousAmount > 0
+        ? Math.round((Math.abs(delta) / previousAmount) * 100)
+        : null,
+  }
+}
+
 function getCurrentBalanceEntries({ snapshots, fundId = null }) {
   const latestByBalance = new Map()
 
   snapshots
     .filter((snapshot) => (fundId ? snapshot.fundId === fundId : true))
     .forEach((snapshot) => {
-      const key = `${snapshot.accountId}|${snapshot.fundId}|${snapshot.assetType}`
+      const key = getCashflowSnapshotBalanceKey(snapshot)
       const existing = latestByBalance.get(key)
       if (isSnapshotNewer(snapshot, existing)) {
         latestByBalance.set(key, snapshot)
@@ -4212,6 +4311,7 @@ function BudgetDataRow({
   categoryIcon = "•",
   categoryLabel = "",
   note = null,
+  metaAside = null,
   amount,
   dueLabel = "",
   secondaryLabel = "",
@@ -4226,6 +4326,7 @@ function BudgetDataRow({
   rowClassName = "",
 }) {
   const compactDueLabel = getCompactDueLabel(dueLabel)
+  const displayDueLabel = compactDueLabel || dueLabel
 
   return (
     <div
@@ -4244,12 +4345,30 @@ function BudgetDataRow({
         onClick={onOpen}
       >
         <span className="budget-data-main">
-          <span
-            className="budget-data-category-icon"
-            aria-hidden="true"
-            title={categoryLabel}
-          >
-            {categoryIcon}
+          <span className="budget-data-icon-shell">
+            <span
+              className="budget-data-category-icon"
+              aria-hidden="true"
+              title={categoryLabel}
+            >
+              {categoryIcon}
+            </span>
+            {showRecurringBadge ? (
+              <span className="budget-data-recurring-badge" aria-hidden="true">
+                <svg
+                  className="budget-data-recurring-icon"
+                  viewBox="0 0 20 20"
+                  fill="none"
+                >
+                  <path
+                    fill="currentColor"
+                    fillRule="evenodd"
+                    clipRule="evenodd"
+                    d="M10 3.25a6.75 6.75 0 1 0 6.45 8.76 1 1 0 1 0-1.9-.62A4.75 4.75 0 1 1 10 5.25h2.3L10.9 6.6a1 1 0 1 0 1.4 1.42l3.2-3.14a1 1 0 0 0 0-1.42L12.3.32a1 1 0 1 0-1.4 1.42l1.4 1.51H10Z"
+                  />
+                </svg>
+              </span>
+            ) : null}
           </span>
           <span className="budget-data-copy">
             <span
@@ -4261,69 +4380,34 @@ function BudgetDataRow({
             >
               {title}
             </span>
-            {compactDueLabel ? (
-              <span className="budget-data-mobile-due">
-                <span
-                  className={
-                    showRecurringBadge
-                      ? "budget-data-repeat-slot active"
-                      : "budget-data-repeat-slot"
-                  }
-                  title={showRecurringBadge ? "Регулярная статья" : undefined}
-                  aria-label={
-                    showRecurringBadge ? "Регулярная статья" : undefined
-                  }
-                >
-                  {showRecurringBadge ? (
-                    <span className="budget-data-repeat" aria-hidden="true">
-                      ↻
-                    </span>
-                  ) : null}
-                </span>
-                {compactDueLabel}
-              </span>
-            ) : null}
           </span>
-        </span>
-        {dueLabel ? (
-          <span
-            className={
-              isPastDue ? "budget-data-due overdue" : "budget-data-due"
-            }
-          >
+          {displayDueLabel ? (
             <span
               className={
-                showRecurringBadge
-                  ? "budget-data-repeat-slot active"
-                  : "budget-data-repeat-slot"
+                isPastDue ? "budget-data-due overdue" : "budget-data-due"
               }
-              title={showRecurringBadge ? "Регулярная статья" : undefined}
-              aria-label={showRecurringBadge ? "Регулярная статья" : undefined}
             >
-              {showRecurringBadge ? (
-                <span className="budget-data-repeat" aria-hidden="true">
-                  ↻
-                </span>
-              ) : null}
+              {displayDueLabel}
             </span>
-            {dueLabel}
-          </span>
-        ) : null}
-        {secondaryLabel ? (
-          <span
-            className={
-              secondaryTone === "muted"
-                ? "budget-data-kind auto"
-                : "budget-data-kind"
-            }
-          >
-            {secondaryLabel}
-          </span>
-        ) : null}
+          ) : null}
+        </span>
         <span className="budget-data-side">
           <span className="budget-data-amount">
             {formatCurrency(amount)} Kč
           </span>
+          {metaAside ? (
+            <span className="budget-data-side-meta">{metaAside}</span>
+          ) : secondaryLabel ? (
+            <span
+              className={
+                secondaryTone === "muted"
+                  ? "budget-data-kind auto"
+                  : "budget-data-kind"
+              }
+            >
+              {secondaryLabel}
+            </span>
+          ) : null}
         </span>
       </button>
       {note ? <div className="budget-data-note">{note}</div> : null}
@@ -4334,14 +4418,12 @@ function BudgetDataRow({
 
 function ExpenseRow({ expense, categories, onToggle, onOpen, onEdit }) {
   const categoryMeta = getCategoryMeta(expense.category, categories)
-  const isAutoPayment = expense.cadence === "auto"
   const isCompleted = expense.completed
   const isPastDue = isExpensePastDue(expense)
   const isRecurring =
     expense.frequency === "Каждый месяц" ||
     expense.frequency === "Раз в год" ||
     Boolean(expense.templateId)
-  const transactionTypeLabel = isAutoPayment ? "Автоплатеж" : "Ручной платеж"
   const paymentDateLabel = getExpensePaymentDateLabel(expense)
 
   return (
@@ -4351,8 +4433,6 @@ function ExpenseRow({ expense, categories, onToggle, onOpen, onEdit }) {
       categoryLabel={categoryMeta.label}
       amount={expense.amount}
       dueLabel={paymentDateLabel}
-      secondaryLabel={transactionTypeLabel}
-      secondaryTone={isAutoPayment ? "muted" : "default"}
       showRecurringBadge={isRecurring}
       isCompleted={isCompleted}
       isPastDue={isPastDue}
@@ -5222,7 +5302,7 @@ function SettingsScreen({
             onClick={onOpenCashflowAccounts}
           >
             <span className="settings-action-title">
-              Счета для потоков денег
+              Счета для сбережений
             </span>
             <span className="settings-action-note">
               Добавлять, переименовывать и удалять места хранения денег: банки,
@@ -5234,9 +5314,7 @@ function SettingsScreen({
             type="button"
             onClick={onOpenCashflowFunds}
           >
-            <span className="settings-action-title">
-              Фонды для потоков денег
-            </span>
+            <span className="settings-action-title">Фонды сбережений</span>
             <span className="settings-action-note">
               Управлять фондами вроде кубышки, сейфа безопасности, инвестиций и
               накоплений.
@@ -5283,11 +5361,11 @@ function CashflowAccountsSettingsScreen({
         <Breadcrumbs
           items={[
             { label: "Настройки", onClick: onBackToSettings },
-            { label: "Счета cashflow", current: true },
+            { label: "Счета сбережений", current: true },
           ]}
         />
-        <p className="eyebrow">Потоки денег</p>
-        <h1>Счета cashflow</h1>
+        <p className="eyebrow">Сбережения</p>
+        <h1>Счета сбережений</h1>
         <p className="page-note">
           Здесь живут места хранения денег, которые потом выбираются в снимках
           баланса.
@@ -5376,11 +5454,11 @@ function CashflowFundsSettingsScreen({
         <Breadcrumbs
           items={[
             { label: "Настройки", onClick: onBackToSettings },
-            { label: "Фонды cashflow", current: true },
+            { label: "Фонды сбережений", current: true },
           ]}
         />
-        <p className="eyebrow">Потоки денег</p>
-        <h1>Фонды cashflow</h1>
+        <p className="eyebrow">Сбережения</p>
+        <h1>Фонды сбережений</h1>
         <p className="page-note">
           Здесь живут назначения денег: кубышка, сейф, инвестиции, накопления и
           свободный остаток.
@@ -6045,8 +6123,10 @@ function YearCard({
   return (
     <section className="card year-card">
       <div className="year-card-head">
-        <div className="year-card-title">
-          <h2>{yearData.year}</h2>
+        <div className="year-card-summary">
+          <div className="year-card-title">
+            <h2>{yearData.year}</h2>
+          </div>
           <div className="year-card-stats">
             <span>Бюджет: {formatCurrency(yearData.budget)} Kč</span>
           </div>
@@ -6091,12 +6171,90 @@ function YearCard({
   )
 }
 
+function BudgetHubRecurringIcon() {
+  return (
+    <svg
+      viewBox="0 0 32 32"
+      aria-hidden="true"
+      focusable="false"
+      className="budget-hub-glyph"
+    >
+      <path
+        d="M16 4.5a11.5 11.5 0 0 1 8.4 3.6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.5"
+      />
+      <path
+        d="M24.4 4.8 25.8 8.9 21.6 10"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.5"
+      />
+      <path
+        d="M16 27.5a11.5 11.5 0 0 1-8.4-3.6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.5"
+      />
+      <path
+        d="M7.6 27.2 6.2 23.1 10.4 22"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.5"
+      />
+      <path
+        d="M7.1 12.3A11.4 11.4 0 0 1 11.8 6"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.5"
+      />
+      <path
+        d="M24.9 19.7a11.4 11.4 0 0 1-4.7 6.3"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth="2.5"
+      />
+    </svg>
+  )
+}
+
+function BudgetHubPlusIcon() {
+  return (
+    <svg
+      viewBox="0 0 32 32"
+      aria-hidden="true"
+      focusable="false"
+      className="budget-hub-glyph"
+    >
+      <path
+        d="M16 6v20M6 16h20"
+        fill="none"
+        stroke="currentColor"
+        strokeLinecap="round"
+        strokeWidth="3"
+      />
+    </svg>
+  )
+}
+
 function MonthsScreen({
   yearCards,
   expandedYears,
   onToggleYear,
   onDeleteYear,
-  onAddYear,
   onCreateExpense,
   onOpenCurrentMonth,
   onOpenNextMonth,
@@ -6110,7 +6268,6 @@ function MonthsScreen({
   return (
     <>
       <header className="page-header">
-        <p className="eyebrow">Вход в бюджет</p>
         <h1>Бюджет</h1>
         <p className="page-note">
           Отсюда можно быстро перейти в текущий месяц, в грядущий месяц и в
@@ -6118,134 +6275,71 @@ function MonthsScreen({
         </p>
       </header>
 
-      <section className="card budget-hub-card">
-        <div className="budget-hub-grid">
-          <div className="budget-hub-panel">
-            <div className="budget-hub-copy">
-              <span className="budget-hub-kicker">Переходы по времени</span>
-              <h2>Работа с месяцами</h2>
-              <p>
-                Быстро открывай текущий, следующий или любой другой месяц из
-                годового списка ниже.
-              </p>
-            </div>
+      <section className="budget-hub-card" aria-label="Быстрые переходы">
+        <div className="budget-hub-actions">
+          <button
+            className="budget-hub-action budget-hub-action-strong"
+            type="button"
+            onClick={onOpenCurrentMonth}
+          >
+            <span
+              className="budget-hub-action-icon budget-hub-action-icon-month"
+              aria-hidden="true"
+            >
+              {currentMonthMeta.icon}
+            </span>
+            <span className="budget-hub-action-copy">
+              <strong>{currentMonthLabel}</strong>
+              <small>Текущий месяц</small>
+            </span>
+          </button>
 
-            <div className="budget-hub-actions budget-hub-actions-primary">
-              <button
-                className="budget-hub-action budget-hub-action-strong"
-                type="button"
-                onClick={onOpenCurrentMonth}
-              >
-                <span
-                  className="budget-hub-action-icon"
-                  aria-hidden="true"
-                  style={{
-                    background: currentMonthMeta.bg,
-                    color: currentMonthMeta.tone,
-                  }}
-                >
-                  {currentMonthMeta.icon}
-                </span>
-                <span className="budget-hub-action-copy">
-                  <strong>{currentMonthLabel}</strong>
-                  <small>Что нужно оплатить сейчас</small>
-                </span>
-              </button>
+          <button
+            className="budget-hub-action budget-hub-action-strong"
+            type="button"
+            onClick={onOpenNextMonth}
+          >
+            <span
+              className="budget-hub-action-icon budget-hub-action-icon-month"
+              aria-hidden="true"
+            >
+              {nextMonthMeta.icon}
+            </span>
+            <span className="budget-hub-action-copy">
+              <strong>{nextMonthLabel}</strong>
+              <small>Грядущий месяц</small>
+            </span>
+          </button>
 
-              <button
-                className="budget-hub-action budget-hub-action-accent"
-                type="button"
-                onClick={onOpenNextMonth}
-              >
-                <span
-                  className="budget-hub-action-icon"
-                  aria-hidden="true"
-                  style={{
-                    background: nextMonthMeta.bg,
-                    color: nextMonthMeta.tone,
-                  }}
-                >
-                  {nextMonthMeta.icon}
-                </span>
-                <span className="budget-hub-action-copy">
-                  <strong>{nextMonthLabel}</strong>
-                  <small>Прогноз и план заранее</small>
-                </span>
-              </button>
+          <button
+            className="budget-hub-action budget-hub-action-strong"
+            type="button"
+            onClick={onOpenRegular}
+          >
+            <span className="budget-hub-action-icon" aria-hidden="true">
+              <BudgetHubRecurringIcon />
+            </span>
+            <span className="budget-hub-action-copy">
+              <strong>Повторяющиеся</strong>
+              <small>Регулярные траты</small>
+            </span>
+          </button>
 
-              <button
-                className="budget-hub-action"
-                type="button"
-                onClick={() =>
-                  document
-                    .getElementById("budget-years-stack")
-                    ?.scrollIntoView({ behavior: "smooth", block: "start" })
-                }
-              >
-                <span className="budget-hub-action-icon" aria-hidden="true">
-                  🗓️
-                </span>
-                <span className="budget-hub-action-copy">
-                  <strong>Все месяцы</strong>
-                  <small>Прошлые и будущие периоды</small>
-                </span>
-              </button>
-            </div>
-          </div>
-
-          <div className="budget-hub-panel budget-hub-panel-compact">
-            <div className="budget-hub-copy">
-              <span className="budget-hub-kicker">Быстрые действия</span>
-              <h2>Добавление и шаблоны</h2>
-              <p>
-                Создавай траты из одного места и открывай шаблоны регулярных
-                платежей отдельным блоком.
-              </p>
-            </div>
-
-            <div className="budget-hub-actions budget-hub-actions-secondary">
-              <button
-                className="budget-hub-action budget-hub-action-strong"
-                type="button"
-                onClick={onCreateExpense}
-              >
-                <span className="budget-hub-action-icon" aria-hidden="true">
-                  ＋
-                </span>
-                <span className="budget-hub-action-copy">
-                  <strong>Добавить трату</strong>
-                  <small>Разовая или новая позиция месяца</small>
-                </span>
-              </button>
-
-              <button
-                className="budget-hub-action"
-                type="button"
-                onClick={onOpenRegular}
-              >
-                <span className="budget-hub-action-icon" aria-hidden="true">
-                  ↻
-                </span>
-                <span className="budget-hub-action-copy">
-                  <strong>Регулярные траты</strong>
-                  <small>Шаблоны ежемесячных и годовых платежей</small>
-                </span>
-              </button>
-            </div>
-          </div>
+          <button
+            className="budget-hub-action budget-hub-action-strong"
+            type="button"
+            onClick={onCreateExpense}
+          >
+            <span className="budget-hub-action-icon" aria-hidden="true">
+              <BudgetHubPlusIcon />
+            </span>
+            <span className="budget-hub-action-copy">
+              <strong>Новая трата</strong>
+              <small>Быстрое добавление</small>
+            </span>
+          </button>
         </div>
       </section>
-
-      <div className="months-utility-bar">
-        <button
-          className="budget-year-create-button"
-          type="button"
-          onClick={onAddYear}
-        >
-          <span aria-hidden="true">＋</span>
-          <span>Добавить новый учетный год</span>
-        </button>
-      </div>
 
       <div className="years-stack" id="budget-years-stack">
         {yearCards.map((yearData) => (
@@ -6265,11 +6359,168 @@ function MonthsScreen({
 }
 
 function formatRegularSchedule(template) {
+  const parsedDay = Number(template.dayOfMonth)
+  const dayLabel =
+    Number.isFinite(parsedDay) && parsedDay > 0 ? parsedDay : template.dayOfMonth
+
   if (template.frequency === "Раз в год") {
-    return `${template.month} · ${template.dayOfMonth} число`
+    const normalizedMonthName = normalizeMonthName(template.month)
+    const monthIndex = fullMonthNames.findIndex(
+      (item) => item === normalizedMonthName
+    )
+    const monthLabel =
+      monthNamesGenitive[monthIndex] ?? String(template.month ?? "").toLowerCase()
+
+    return `Каждое ${dayLabel} ${monthLabel}`
   }
 
-  return `Каждый месяц · ${template.dayOfMonth} число`
+  return `Каждое ${dayLabel} число месяца`
+}
+
+function sanitizeTabularValue(value) {
+  return String(value ?? "")
+    .replaceAll("\t", " ")
+    .replaceAll("\r", " ")
+    .replaceAll("\n", " ")
+    .trim()
+}
+
+function formatRegularExpenseStatus(template, currentMonthContext) {
+  return isRegularTemplateScheduledToStop(template)
+    ? getRegularStopNote(template, currentMonthContext) ?? "Остановлена"
+    : "Активна"
+}
+
+function formatRegularExpenseUpcomingChange(template, currentMonthContext) {
+  const upcomingChange = getUpcomingRegularChange(template, currentMonthContext)
+  if (!upcomingChange) {
+    return ""
+  }
+
+  return `С ${formatMonthYearLabel(upcomingChange.effectiveMonth, upcomingChange.effectiveYear)}: ${formatCurrency(upcomingChange.amount)} Kč вместо ${formatCurrency(upcomingChange.previousAmount)} Kč`
+}
+
+function renderAmountChangeNote({
+  previousAmount,
+}) {
+  return (
+    <span className="budget-data-change-hint">
+      <span className="budget-data-change-label">Смена цены:</span>
+      <span className="budget-data-change-previous">
+        <s>{formatCurrency(previousAmount)} Kč</s>
+      </span>
+    </span>
+  )
+}
+
+function formatRegularExpenseHistory(template) {
+  if (!template.history?.length) {
+    return ""
+  }
+
+  return [...template.history]
+    .sort(
+      (left, right) =>
+        getPeriodOrderKey(left.effectiveYear, left.effectiveMonth) -
+        getPeriodOrderKey(right.effectiveYear, right.effectiveMonth)
+    )
+    .map(
+      (entry) =>
+        `${formatMonthYearLabel(entry.effectiveMonth, entry.effectiveYear)}: ${formatCurrency(entry.amount)} Kč`
+    )
+    .join(" | ")
+}
+
+function buildRegularExpensesTsv({
+  regularExpenses,
+  categories,
+  currentMonthContext,
+}) {
+  const headers = [
+    "Название",
+    "Сумма сейчас, Kč",
+    "Частота",
+    "Месяц",
+    "День месяца",
+    "Расписание",
+    "Тип платежа",
+    "Владелец",
+    "Плательщик",
+    "Категория",
+    "Статус",
+    "Ближайшее изменение",
+    "История сумм",
+  ]
+
+  const rows = regularExpenses
+    .filter((template) => template.isActive !== false)
+    .sort((left, right) => {
+      const ownerCompare = String(left.owner ?? "").localeCompare(
+        String(right.owner ?? ""),
+        "ru"
+      )
+      if (ownerCompare !== 0) {
+        return ownerCompare
+      }
+
+      return (left.sortOrder ?? 0) - (right.sortOrder ?? 0)
+    })
+    .map((template) => {
+      const categoryMeta = getCategoryMeta(template.category, categories)
+      const currentAmount = getRegularAmountForPeriod(
+        template,
+        currentMonthContext.year,
+        currentMonthContext.monthName
+      )
+
+      return [
+        template.title,
+        currentAmount,
+        template.frequency,
+        template.frequency === "Раз в год" ? template.month : "",
+        template.dayOfMonth,
+        formatRegularSchedule(template),
+        template.cadence === "auto" ? "Автоплатеж" : "Ручной платеж",
+        template.owner,
+        template.payer,
+        categoryMeta.label,
+        formatRegularExpenseStatus(template, currentMonthContext),
+        formatRegularExpenseUpcomingChange(template, currentMonthContext),
+        formatRegularExpenseHistory(template),
+      ].map(sanitizeTabularValue)
+    })
+
+  return [headers, ...rows].map((row) => row.join("\t")).join("\n")
+}
+
+function downloadRegularExpensesFile({
+  regularExpenses,
+  categories,
+  currentMonthContext,
+}) {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return
+  }
+
+  const tsv = buildRegularExpensesTsv({
+    regularExpenses,
+    categories,
+    currentMonthContext,
+  })
+  const exportDate = new Date().toISOString().slice(0, 10)
+  const fileName = `regular-expenses-${exportDate}.tsv`
+  const blob = new Blob([`\uFEFF${tsv}`], {
+    type: "text/tab-separated-values;charset=utf-8",
+  })
+  const objectUrl = window.URL.createObjectURL(blob)
+  const link = document.createElement("a")
+
+  link.href = objectUrl
+  link.download = fileName
+  document.body.append(link)
+  link.click()
+  link.remove()
+  window.URL.revokeObjectURL(objectUrl)
 }
 
 function AnalyticsScreen({
@@ -6623,19 +6874,18 @@ function RegularExpenseTemplateCard({
       title={template.title}
       categoryIcon={categoryMeta.icon}
       categoryLabel={categoryMeta.label}
-      note={
-        stopNote
-          ? stopNote
-          : upcomingChange
-            ? `С ${formatMonthYearGenitive(upcomingChange.effectiveMonth, upcomingChange.effectiveYear)}: ${formatCurrency(upcomingChange.amount)} Kč вместо ${formatCurrency(upcomingChange.previousAmount)} Kč`
-            : null
+      note={stopNote ? stopNote : null}
+      metaAside={
+        !stopNote && upcomingChange
+          ? renderAmountChangeNote({
+              effectiveMonth: upcomingChange.effectiveMonth,
+              effectiveYear: upcomingChange.effectiveYear,
+              previousAmount: upcomingChange.previousAmount,
+            })
+          : null
       }
       amount={currentAmount}
       dueLabel={formatRegularSchedule(template)}
-      secondaryLabel={
-        template.cadence === "auto" ? "Автоплатеж" : "Ручной платеж"
-      }
-      secondaryTone={template.cadence === "auto" ? "muted" : "default"}
       onOpen={onOpen}
       actions={
         <>
@@ -6685,6 +6935,7 @@ function RegularExpensesScreen({
   currentMonthContext,
   summary,
   onCreate,
+  onExport,
   onCreateInGroup,
   onOpen,
   onEdit,
@@ -6746,13 +6997,22 @@ function RegularExpensesScreen({
             <strong>{summary.upcomingChanges}</strong>
           </div>
         </div>
-        <button
-          className="primary-action-button"
-          type="button"
-          onClick={onCreate}
-        >
-          Добавить регулярную трату
-        </button>
+        <div className="regular-summary-actions">
+          <button
+            className="secondary-action-button"
+            type="button"
+            onClick={onExport}
+          >
+            Выгрузить в Google Sheets
+          </button>
+          <button
+            className="primary-action-button"
+            type="button"
+            onClick={onCreate}
+          >
+            Добавить регулярную трату
+          </button>
+        </div>
       </section>
 
       {ownerGroups.map((group) => (
@@ -6880,13 +7140,11 @@ function ProjectedExpenseRow({
   onOpenExpense,
   onEditExpense,
 }) {
-  const isAutoPayment = expense.cadence === "auto"
   const isTemplateExpense = Boolean(expense.templateId)
   const isRecurring =
     expense.frequency === "Каждый месяц" ||
     expense.frequency === "Раз в год" ||
     isTemplateExpense
-  const transactionTypeLabel = isAutoPayment ? "Автоплатеж" : "Ручной платеж"
   const categoryMeta = getCategoryMeta(expense.category, categories)
 
   return (
@@ -6895,11 +7153,14 @@ function ProjectedExpenseRow({
       titleClassName="projected-expense-title"
       categoryIcon={categoryMeta.icon}
       categoryLabel={categoryMeta.label}
-      note={expense.effectiveNote ?? null}
+      note={expense.effectiveChangeNote ? null : expense.effectiveNote ?? null}
+      metaAside={
+        expense.effectiveChangeNote
+          ? renderAmountChangeNote(expense.effectiveChangeNote)
+          : null
+      }
       amount={expense.amount}
       dueLabel={getExpensePaymentDateLabel(expense)}
-      secondaryLabel={transactionTypeLabel}
-      secondaryTone={isAutoPayment ? "muted" : "default"}
       showRecurringBadge={isRecurring}
       onOpen={() =>
         isTemplateExpense ? onOpenTemplate?.() : onOpenExpense?.(expense)
@@ -6970,6 +7231,7 @@ function NextMonthBudgetScreen({
   title = "Бюджет грядущего месяца",
   note = "Этот экран собирается из регулярных шаблонов. Изменения суммы применяются здесь уже с нового периода, а текущий месяц остается без переписывания.",
   breadcrumbs = null,
+  showHeader = true,
   monthLabel,
   monthMeta,
   financialSummary,
@@ -6983,12 +7245,14 @@ function NextMonthBudgetScreen({
 }) {
   return (
     <>
-      <header className="page-header">
-        {breadcrumbs?.length ? <Breadcrumbs items={breadcrumbs} /> : null}
-        <p className="eyebrow">Проекция бюджета</p>
-        <h1>{title}</h1>
-        <p className="page-note">{note}</p>
-      </header>
+      {showHeader ? (
+        <header className="page-header">
+          {breadcrumbs?.length ? <Breadcrumbs items={breadcrumbs} /> : null}
+          <p className="eyebrow">Проекция бюджета</p>
+          <h1>{title}</h1>
+          <p className="page-note">{note}</p>
+        </header>
+      ) : null}
 
       <div className="dashboard-grid">
         <MonthFinancialBoard
@@ -7224,6 +7488,9 @@ function CashflowDetailRow({
 }
 
 function CashflowSnapshotRow({ snapshot, onClick }) {
+  const change = snapshot.monthChange
+  const isPositiveChange = Number(change?.delta ?? 0) > 0
+
   return (
     <div
       className="cashflow-detail-row clickable cashflow-snapshot-row"
@@ -7239,10 +7506,28 @@ function CashflowSnapshotRow({ snapshot, onClick }) {
     >
       <div className="cashflow-detail-copy">
         <strong>{snapshot.accountName}</strong>
-        <span>{snapshot.fundName}</span>
+        <span>{`${snapshot.fundName} · ${snapshot.assetTypeLabel}`}</span>
       </div>
       <div className="cashflow-detail-value cashflow-snapshot-value">
-        <strong>{formatCurrency(snapshot.amountCzk)} Kč</strong>
+        <div className="cashflow-snapshot-change-line">
+          {change ? (
+            <span
+              className={[
+                "cashflow-snapshot-change",
+                isPositiveChange ? "positive" : "negative",
+              ]
+                .filter(Boolean)
+                .join(" ")}
+            >
+              <strong>
+                {isPositiveChange ? "▲" : "▼"}{" "}
+                {formatCurrency(Math.abs(change.delta))} Kč
+              </strong>
+              {change.percent !== null ? <span>({change.percent}%)</span> : null}
+            </span>
+          ) : null}
+          <strong>{formatCurrency(snapshot.amountCzk)} Kč</strong>
+        </div>
         <span>{formatSqlDateHuman(snapshot.snapshotDate)}</span>
       </div>
     </div>
@@ -8143,10 +8428,7 @@ function CashflowSnapshotDetailsModal({
   const fund = funds.find((item) => item.id === snapshot.fundId)
   const accountName = account?.name ?? "Счёт"
   const fundName = fund?.name ?? getCashflowSystemFundLabel(fund?.fundType)
-  const assetTypeLabel =
-    cashflowAssetTypeOptions.find(
-      (option) => option.value === snapshot.assetType
-    )?.label ?? snapshot.assetType
+  const assetTypeLabel = getCashflowAssetTypeLabel(snapshot.assetType)
   const ownerLabel = getCashflowOwnerLabel(snapshot.owner)
 
   return (
@@ -8532,6 +8814,8 @@ function CashflowScreen({
         ...snapshot,
         accountName: account?.name ?? "Счёт",
         fundName: fund?.name ?? getCashflowSystemFundLabel(fund?.fundType),
+        assetTypeLabel: getCashflowAssetTypeLabel(snapshot.assetType),
+        monthChange: getCashflowSnapshotMonthChange({ snapshot, snapshots }),
       }
     }
   )
@@ -8610,8 +8894,8 @@ function CashflowScreen({
   return (
     <>
       <header className="page-header">
-        <p className="eyebrow">Потоки денег</p>
-        <h1>Денежный поток</h1>
+        <p className="eyebrow">Сбережения</p>
+        <h1>Сбережения</h1>
         <p className="page-note">
           Смотри, где сейчас лежат деньги и как они распределены между основными
           фондами семьи.
@@ -8625,22 +8909,6 @@ function CashflowScreen({
           </div>
         </section>
       ) : null}
-
-      <section className="cashflow-header-strip card">
-        <div>
-          <strong>Текущий период</strong>
-          <span>{currentMonthLabel}</span>
-        </div>
-        <div className="cashflow-header-actions">
-          <button
-            className="primary-action-button"
-            type="button"
-            onClick={onRecalculate}
-          >
-            Пересчитать
-          </button>
-        </div>
-      </section>
 
       <div className="cashflow-summary-grid">
         <CashflowMetricCard
@@ -9615,8 +9883,8 @@ export default function App() {
         document.documentElement.scrollTop ||
         document.body.scrollTop ||
         0
-      const appImageOffset = Math.max(-28, -10 - scrollTop * 0.035)
-      const mobileHeroOffset = Math.max(-46, -16 - scrollTop * 0.11)
+      const appImageOffset = Math.max(-42, -18 - scrollTop * 0.05)
+      const mobileHeroOffset = Math.max(-68, -30 - scrollTop * 0.145)
 
       appShellElement.style.setProperty(
         "--app-month-image-offset",
@@ -11559,9 +11827,12 @@ export default function App() {
         ) : null}
 
         <aside className="sidebar">
-          <div className="brand-mark">
-            <span className="brand-accent" />
-            Family Budget
+          <div className="brand-mark brand-mark-logo">
+            <img
+              className="brand-logo-image"
+              src={myBudjetLogo}
+              alt="My BUDJET"
+            />
           </div>
           <NavigationMenu
             currentScreen={currentScreen}
@@ -11671,7 +11942,7 @@ export default function App() {
                 setCategoryConfirmState({
                   title: `Удалить счёт "${account.name}"?`,
                   description:
-                    "Счёт будет удалён из справочника потоков денег, если он нигде не используется.",
+                    "Счёт будет удалён из справочника сбережений, если он нигде не используется.",
                   onConfirm: async () => {
                     await handleDeleteCashflowAccount(account)
                     setCategoryConfirmState(null)
@@ -11692,7 +11963,7 @@ export default function App() {
                 setCategoryConfirmState({
                   title: `Удалить фонд "${fund.name}"?`,
                   description:
-                    "Фонд будет удалён из справочника потоков денег, если он нигде не используется.",
+                    "Фонд будет удалён из справочника сбережений, если он нигде не используется.",
                   onConfirm: async () => {
                     await handleDeleteCashflowFund(fund)
                     setCategoryConfirmState(null)
@@ -11719,6 +11990,7 @@ export default function App() {
 
           {currentScreen === "periodMonth" && selectedPeriodContext ? (
             <NextMonthBudgetScreen
+              showHeader={false}
               title={`Бюджет ${selectedPeriodContext.monthName.toLowerCase()} ${selectedPeriodContext.year}`}
               note={
                 selectedPeriodIsFuture
@@ -11763,6 +12035,13 @@ export default function App() {
               categories={categories}
               currentMonthContext={currentMonthContext}
               summary={regularSummary}
+              onExport={() =>
+                downloadRegularExpensesFile({
+                  regularExpenses,
+                  categories,
+                  currentMonthContext,
+                })
+              }
               onCreate={() => handleCreateRegularExpense()}
               onCreateInGroup={handleCreateRegularExpenseFromGroup}
               onOpen={handleOpenRegularTemplateDetails}
@@ -11779,7 +12058,6 @@ export default function App() {
               expandedYears={expandedYears}
               onToggleYear={handleToggleYear}
               onDeleteYear={handleDeleteYear}
-              onAddYear={handleAddYear}
               onCreateExpense={handleCreateExpenseFromBudgetHub}
               onOpenCurrentMonth={() => setCurrentScreen("month")}
               onOpenNextMonth={() => {
@@ -11788,10 +12066,7 @@ export default function App() {
               }}
               onOpenRegular={() => setCurrentScreen("regular")}
               onOpenMonth={handleOpenPeriodMonth}
-              currentMonthLabel={(
-                monthNamesGenitive[currentMonthContext.monthIndex] ??
-                currentMonthContext.monthName
-              ).toUpperCase()}
+              currentMonthLabel={currentMonthContext.monthName}
               currentMonthMeta={currentMonthMeta}
               nextMonthLabel={nextMonthContext.monthName}
               nextMonthMeta={nextMonthMeta}

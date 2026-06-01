@@ -1,6 +1,6 @@
 export const navigationItems = [
   "Бюджет",
-  "Денежный поток",
+  "Сбережения",
   "Доходы",
   "Аналитика",
   "Памятные даты",
@@ -11,7 +11,7 @@ export const mobileFooterItems = [
   { key: "budget", label: "Бюджет", icon: "📅" },
   { key: "incomes", label: "Доходы", icon: "🤑" },
   { key: "analytics", label: "Аналитика", icon: "📊" },
-  { key: "cashflow", label: "Поток", icon: "💸" },
+  { key: "cashflow", label: "Сбережения", icon: "💸" },
   { key: "settings", label: "Настройки", icon: "⚙️" },
 ]
 
@@ -46,7 +46,7 @@ const settingsScreenNames = new Set([
 ])
 
 const screenByNavigationItem = {
-  "Денежный поток": "cashflow",
+  Сбережения: "cashflow",
   Доходы: "incomes",
   Аналитика: "analytics",
   Настройка: "settings",
@@ -141,7 +141,7 @@ export function isNavigationItemActive(currentScreen, item, index) {
     return isBudgetScreen(currentScreen)
   }
 
-  if (item === "Денежный поток") {
+  if (item === "Сбережения") {
     return currentScreen === "cashflow"
   }
 
