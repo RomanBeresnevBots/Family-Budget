@@ -610,6 +610,8 @@ const cashflowSystemFundTypes = [
   "savings_goal",
   "free_balance",
 ]
+const CASHFLOW_SUPABASE_IMPORT_MARKER_PREFIX =
+  "family-budget-prototype-cashflow-supabase-import-v1"
 
 let prototypeStoragePrepared = false
 
@@ -1413,6 +1415,152 @@ function getInitialCashflowState() {
   })
 }
 
+function getCashflowSupabaseImportMarkerKey(householdId) {
+  return `${CASHFLOW_SUPABASE_IMPORT_MARKER_PREFIX}:${householdId}`
+}
+
+function hasCashflowSupabaseImportMarker(householdId) {
+  if (typeof window === "undefined" || !householdId) {
+    return false
+  }
+
+  try {
+    return (
+      window.localStorage.getItem(
+        getCashflowSupabaseImportMarkerKey(householdId)
+      ) === "done"
+    )
+  } catch {
+    return false
+  }
+}
+
+function markCashflowSupabaseImportComplete(householdId) {
+  if (typeof window === "undefined" || !householdId) {
+    return
+  }
+
+  try {
+    window.localStorage.setItem(
+      getCashflowSupabaseImportMarkerKey(householdId),
+      "done"
+    )
+  } catch {
+    // ignore storage write errors
+  }
+}
+
+function getLegacyCashflowStateFromLocalStorage() {
+  if (typeof window === "undefined") {
+    return null
+  }
+
+  try {
+    const saved = window.localStorage.getItem(CASHFLOW_STORAGE_KEY)
+    if (!saved) {
+      return null
+    }
+
+    return normalizeCashflowState(JSON.parse(saved))
+  } catch {
+    return null
+  }
+}
+
+function hasMeaningfulCashflowState(state) {
+  const normalizedState = normalizeCashflowState(state)
+  return (
+    normalizedState.accounts.length > 0 ||
+    normalizedState.snapshots.length > 0 ||
+    normalizedState.incomeEvents.length > 0 ||
+    normalizedState.funds.some((fund) => !fund.isSystem)
+  )
+}
+
+function normalizeCashflowMatchValue(value) {
+  return String(value ?? "")
+    .trim()
+    .toLowerCase()
+}
+
+function getCashflowAccountMatchKey(account) {
+  const normalizedAccount = normalizeCashflowAccount(account)
+  if (!normalizedAccount) {
+    return "account::unknown"
+  }
+
+  return [
+    normalizeCashflowMatchValue(normalizedAccount.name),
+    normalizedAccount.owner,
+    normalizedAccount.accountType,
+    normalizedAccount.defaultCurrency,
+  ].join("::")
+}
+
+function getCashflowFundMatchKey(fund) {
+  const normalizedFund = normalizeCashflowFund(fund)
+  if (!normalizedFund) {
+    return "fund::unknown"
+  }
+
+  if (
+    normalizedFund.isSystem ||
+    cashflowSystemFundTypes.includes(normalizedFund.fundType)
+  ) {
+    return `system::${normalizedFund.fundType}`
+  }
+
+  return [
+    normalizeCashflowMatchValue(normalizedFund.name),
+    normalizedFund.fundType,
+    normalizedFund.currency,
+  ].join("::")
+}
+
+function getCashflowIncomeEventImportKey(event) {
+  const normalizedEvent = normalizeCashflowIncomeEvent(event)
+  return [
+    normalizedEvent.incomeDate,
+    normalizedEvent.owner,
+    normalizedEvent.incomeType,
+    normalizedEvent.status,
+    normalizedEvent.expectedAmount,
+    normalizedEvent.actualAmount,
+    normalizedEvent.amountCzk,
+    normalizedEvent.currency,
+    normalizedEvent.note,
+  ].join("::")
+}
+
+function getCashflowSnapshotImportKey({
+  snapshot,
+  accounts,
+  funds,
+  mappedAccountId,
+  mappedFundId,
+}) {
+  const normalizedSnapshot = normalizeCashflowSnapshot(snapshot)
+  const accountMatchKey = getCashflowAccountMatchKey(
+    accounts.find(
+      (account) => account.id === (mappedAccountId ?? normalizedSnapshot.accountId)
+    )
+  )
+  const fundMatchKey = getCashflowFundMatchKey(
+    funds.find((fund) => fund.id === (mappedFundId ?? normalizedSnapshot.fundId))
+  )
+
+  return [
+    accountMatchKey,
+    fundMatchKey,
+    normalizedSnapshot.snapshotDate,
+    normalizedSnapshot.assetType,
+    normalizedSnapshot.owner,
+    normalizedSnapshot.amountCzk,
+    normalizedSnapshot.currency,
+    normalizedSnapshot.exchangeRateToCzk,
+  ].join("::")
+}
+
 function getAuthUserDisplayName(user) {
   return (
     user?.user_metadata?.full_name ??
@@ -1553,6 +1701,153 @@ async function loadCashflowStateFromSupabase(householdId) {
     incomeEvents,
     settings,
   })
+}
+
+async function importLegacyCashflowStateToSupabase({
+  householdId,
+  legacyState,
+  remoteState,
+}) {
+  const normalizedLegacyState = normalizeCashflowState(legacyState)
+  const shouldApplyLegacySettings = !hasMeaningfulCashflowState(remoteState)
+  const accountIdMap = new Map()
+  const fundIdMap = new Map()
+  const importedAccounts = [...remoteState.accounts]
+  const importedFunds = [...remoteState.funds]
+
+  for (const account of normalizedLegacyState.accounts) {
+    const matchKey = getCashflowAccountMatchKey(account)
+    const existingAccount = importedAccounts.find(
+      (candidate) => getCashflowAccountMatchKey(candidate) === matchKey
+    )
+
+    if (existingAccount) {
+      accountIdMap.set(account.id, existingAccount.id)
+      continue
+    }
+
+    const accountId = await saveCashflowAccountToSupabase({
+      householdId,
+      account,
+    })
+    const importedAccount = normalizeCashflowAccount({
+      ...account,
+      id: accountId,
+    })
+    importedAccounts.push(importedAccount)
+    accountIdMap.set(account.id, accountId)
+  }
+
+  for (const fund of normalizedLegacyState.funds) {
+    const matchKey = getCashflowFundMatchKey(fund)
+    const existingFund = importedFunds.find(
+      (candidate) => getCashflowFundMatchKey(candidate) === matchKey
+    )
+
+    if (existingFund) {
+      fundIdMap.set(fund.id, existingFund.id)
+      continue
+    }
+
+    const fundId = await saveCashflowFundToSupabase({
+      householdId,
+      fund,
+    })
+    const importedFund = normalizeCashflowFund({
+      ...fund,
+      id: fundId,
+    })
+    importedFunds.push(importedFund)
+    fundIdMap.set(fund.id, fundId)
+  }
+
+  const existingSnapshotKeys = new Set(
+    remoteState.snapshots.map((snapshot) =>
+      getCashflowSnapshotImportKey({
+        snapshot,
+        accounts: importedAccounts,
+        funds: importedFunds,
+      })
+    )
+  )
+
+  for (const snapshot of normalizedLegacyState.snapshots) {
+    const mappedAccountId = accountIdMap.get(snapshot.accountId) ?? ""
+    const mappedFundId = fundIdMap.get(snapshot.fundId) ?? ""
+
+    if (!mappedFundId) {
+      continue
+    }
+
+    const snapshotImportKey = getCashflowSnapshotImportKey({
+      snapshot,
+      accounts: importedAccounts,
+      funds: importedFunds,
+      mappedAccountId,
+      mappedFundId,
+    })
+
+    if (existingSnapshotKeys.has(snapshotImportKey)) {
+      continue
+    }
+
+    await saveCashflowSnapshotToSupabase({
+      householdId,
+      snapshot: {
+        ...snapshot,
+        id: null,
+        accountId: mappedAccountId,
+        fundId: mappedFundId,
+      },
+      existingAccounts: importedAccounts,
+    })
+
+    existingSnapshotKeys.add(snapshotImportKey)
+  }
+
+  const existingIncomeEventKeys = new Set(
+    remoteState.incomeEvents.map((event) => getCashflowIncomeEventImportKey(event))
+  )
+
+  for (const event of normalizedLegacyState.incomeEvents) {
+    const eventImportKey = getCashflowIncomeEventImportKey(event)
+    if (existingIncomeEventKeys.has(eventImportKey)) {
+      continue
+    }
+
+    await saveCashflowIncomeEventToSupabase({
+      householdId,
+      event: {
+        ...event,
+        id: null,
+      },
+    })
+
+    existingIncomeEventKeys.add(eventImportKey)
+  }
+
+  if (shouldApplyLegacySettings) {
+    const mergedFunds = importedFunds.map((remoteFund) => {
+      const legacyFund = normalizedLegacyState.funds.find(
+        (fund) => fundIdMap.get(fund.id) === remoteFund.id
+      )
+
+      return legacyFund
+        ? normalizeCashflowFund({
+            ...remoteFund,
+            ...legacyFund,
+            id: remoteFund.id,
+            createdAt: remoteFund.createdAt,
+          })
+        : remoteFund
+    })
+
+    await saveCashflowSettingsToSupabase({
+      householdId,
+      settings: normalizedLegacyState.settings,
+      funds: mergedFunds,
+    })
+  }
 }
 
 async function saveCashflowSettingsToSupabase({
@@ -9570,6 +9865,7 @@ export default function App() {
   const [dbHydrated, setDbHydrated] = useState(!shouldUseSupabaseStorage())
   const skipNextDbSyncRef = useRef(false)
   const previewStateAppliedRef = useRef(false)
+  const cashflowImportAttemptedRef = useRef(false)
   const latestSnapshotRef = useRef({ members, categories, regularExpenses })
   const persistInFlightRef = useRef(false)
   const persistQueuedRef = useRef(false)
@@ -10138,6 +10434,7 @@ export default function App() {
     if (!shouldUseSupabase) {
       setCashflowHydrated(true)
       setCashflowError("")
+      cashflowImportAttemptedRef.current = false
       return
     }
 
@@ -10151,8 +10448,28 @@ export default function App() {
       try {
         setCashflowHydrated(false)
         setCashflowError("")
-        const loadedState =
-          await loadCashflowStateFromSupabase(supabaseHouseholdId)
+        let loadedState = await loadCashflowStateFromSupabase(supabaseHouseholdId)
+
+        if (
+          !cashflowImportAttemptedRef.current &&
+          !hasCashflowSupabaseImportMarker(supabaseHouseholdId)
+        ) {
+          cashflowImportAttemptedRef.current = true
+          const legacyState = getLegacyCashflowStateFromLocalStorage()
+
+          if (legacyState && hasMeaningfulCashflowState(legacyState)) {
+            await importLegacyCashflowStateToSupabase({
+              householdId: supabaseHouseholdId,
+              legacyState,
+              remoteState: loadedState,
+            })
+            markCashflowSupabaseImportComplete(supabaseHouseholdId)
+            loadedState = await loadCashflowStateFromSupabase(
+              supabaseHouseholdId
+            )
+          }
+        }
+
         if (isCancelled) {
           return
         }
